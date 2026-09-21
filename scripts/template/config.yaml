@@ -1,0 +1,28 @@
+# Configuration for LLM agents
+# llm1 - ReAct agent for prompt analysis and optimization
+# llm2 - LLM that executes the prompt and returns the result
+
+llm1:
+  # API configuration
+  api_base: "http://192.168.1.4:1234/v1"
+  api_key: "sk-9YYF0cHdAXvMNV6IqBQYC2cRekZLsNFP"
+  model: "qwen/qwen3.8-27b"
+  temperature: 0.0
+  # Maximum number of optimization attempts
+  max_attempts: 30
+  # Verbose mode (prints LLM messages to console)
+  verbose: true
+
+llm2:
+  # API configuration
+  api_base: "http://192.168.1.57:1234/v1"
+  api_key: "EMPTY"
+  model: "google/gemma-4-12b-qat"
+  temperature: 0.0
+
+# Human-in-the-loop mode for analyze_prompt:
+# When true, the formed analysis prompt is written to srcprompt.txt,
+# dstprompt.txt is cleared, and the script waits until dstprompt.txt
+# is no longer empty, then takes the new prompt + changes from it.
+# When false, the current direct-LLM logic is used.
+HL: true
