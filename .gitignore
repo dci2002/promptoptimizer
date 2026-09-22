@@ -218,3 +218,8 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Prompt Optimizer — per-run file sandbox (architecture §2).
+# Ignore all runtime artifacts, but keep .gitkeep so the directory is tracked.
+/workspace/*
+!/workspace/.gitkeep
