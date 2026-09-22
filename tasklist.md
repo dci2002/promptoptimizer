@@ -39,28 +39,28 @@
 
 ## Phase 1 — Config core + skeleton UI (GUI test: the window)
 
-- [ ] **T1.1** `core/config.py` — `ConfigManager`: `load()` with schema
+- [x] **T1.1** `core/config.py` — `ConfigManager`: `load()` with schema
       validation (`llms[]`, 5 required fields per entry, `roles` referencing
       existing names, `hl`, `max_attempts`); `save()` atomic (tmp +
       `os.replace`).
-- [ ] **T1.2** `validate_llm_entry(cfg) -> list[str]` — non-empty fields,
+- [x] **T1.2** `validate_llm_entry(cfg) -> list[str]` — non-empty fields,
       float temperature.
-- [ ] **T1.3** `ui/js/index.html` — two-tab skeleton: "Prompts" / "Settings"
+- [x] **T1.3** `ui/js/index.html` — two-tab skeleton: "Prompts" / "Settings"
       with the section shells from architecture §7.1 (empty tables/fields,
       labels already in place).
-- [ ] **T1.4** `ui/js/style.css` — base layout: tabs, sections, multiline
+- [x] **T1.4** `ui/js/style.css` — base layout: tabs, sections, multiline
       fields sized to 10 lines, icon-button style + hover tooltips, table
       and modal base styles.
-- [ ] **T1.5** `ui/js/app.js` — tab switching only; on load call
+- [x] **T1.5** `ui/js/app.js` — tab switching only; on load call
       `window.pywebview.api.get_config()` and log the result to the page
       (small status line) to prove the bridge works.
-- [ ] **T1.6** `ui/api.py` — `Api` class with `get_config()` implemented;
+- [x] **T1.6** `ui/api.py` — `Api` class with `get_config()` implemented;
       all other methods from architecture §3.6 as stubs returning
       `{"ok": False, "error": "not implemented"}`.
-- [ ] **T1.7** `scripts/main/app.py` — `main()`: load config (fail clearly
+- [x] **T1.7** `scripts/main/app.py` — `main()`: load config (fail clearly
       on invalid schema), create `Api`, `webview.create_window(...)`,
       `webview.start()`.
-- [ ] **T1.8** Unit tests `scripts/tests/test_config.py` (part 1): load/save
+- [x] **T1.8** Unit tests `scripts/tests/test_config.py` (part 1): load/save
       round-trip, invalid schema rejection.
 
 **GUI test (Phase 1):** launch the app → window opens, both tabs switch,

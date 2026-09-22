@@ -1,5 +1,15 @@
+# Core
 langchain-core
 langchain-openai
 langgraph
 PyYAML
+
+# GUI: pywebview + Qt backend (required: GTK is unavailable in the target
+# environment, so pywebview must fall back to Qt/QtWebEngine)
 pywebview
+PyQt6
+PyQt6-WebEngine
+qtpy
+
+# Tests
+pytest

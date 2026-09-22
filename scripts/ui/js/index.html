@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Prompt Optimizer</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div id="app">
+        <!-- ═══════════════ Tab bar ═══════════════ -->
+        <nav id="tabbar">
+            <button class="tab-btn active" data-tab="prompts" type="button">Prompts</button>
+            <button class="tab-btn" data-tab="settings" type="button">Settings</button>
+        </nav>
+
+        <!-- ═══════════════ Prompts tab ═══════════════ -->
+        <section id="tab-prompts" class="tab-panel active">
+            <!-- Prompt settings -->
+            <fieldset class="section">
+                <legend>Prompt settings</legend>
+
+                <label class="field-label" for="prompt">Prompt:</label>
+                <textarea id="prompt" class="multiline" rows="10"
+                          placeholder="Prompt template ({{variable}} placeholders supported)"></textarea>
+
+                <label class="field-label" for="result">Result:</label>
+                <div class="field-row">
+                    <textarea id="result" class="multiline" rows="10"
+                              placeholder="Expected result"></textarea>
+                    <button id="btn-run-prompt" class="icon-btn" type="button"
+                            title="Run prompt" aria-label="Run prompt">
+                        <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
+                            <path d="M4 2l10 6-10 6V2z" fill="currentColor"/>
+                        </svg>
+                    </button>
+                </div>
+
+                <label class="field-label">Variables:</label>
+                <div class="field-row">
+                    <button id="btn-var-add" class="icon-btn" type="button"
+                            title="Add variable" aria-label="Add variable">
+                        <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
+                            <path d="M7 2h2v5h5v2H9v5H7V9H2V7h5V2z" fill="currentColor"/>
+                        </svg>
+                    </button>
+                    <button id="btn-var-remove" class="icon-btn" type="button"
+                            title="Remove variable" aria-label="Remove variable">
+                        <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
+                            <path d="M4.3 3 8 6.7 11.7 3 13 4.3 9.3 8l3.7 3.7L11.7 13 8 9.3 4.3 13 3 11.7 6.7 8 3 4.3 4.3 3z" fill="currentColor"/>
+                        </svg>
+                    </button>
+                    <span id="variables-summary" class="muted"></span>
+                </div>
+                <table id="variables-table" class="data-table">
+                    <thead>
+                        <tr><th>Variable</th><th>Value</th></tr>
+                    </thead>
+                    <tbody id="variables-body">
+                        <!-- rows added by app.js -->
+                    </tbody>
+                </table>
+            </fieldset>
+
+            <!-- Execution -->
+            <fieldset class="section">
+                <legend>Execution</legend>
+
+                <div class="field-row">
+                    <button id="btn-start" class="icon-btn" type="button"
+                            title="Start" aria-label="Start">
+                        <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
+                            <path d="M4 2l10 6-10 6V2z" fill="currentColor"/>
+                        </svg>
+                    </button>
+                    <label class="field-label inline" for="progress">Progress:</label>
+                </div>
+                <textarea id="progress" class="multiline" rows="10" readonly
+                          placeholder="(log)"></textarea>
+
+                <label class="field-label" for="optimization-result">Optimization result:</label>
+                <textarea id="optimization-result" class="multiline" rows="10" readonly
+                          placeholder="(optimized prompt template)"></textarea>
+            </fieldset>
+
+            <!-- Human-in-the-loop -->
+            <fieldset class="section">
+                <legend>Human-in-the-loop</legend>
+
+                <label class="check-label">
+                    <input type="checkbox" id="hl-flag"> Human-in-the-loop
+                </label>
+
+                <label class="field-label" for="source-prompt">Source prompt:</label>
+                <div class="field-row">
+                    <textarea id="source-prompt" class="multiline" rows="10" readonly
+                              placeholder="(analysis prompt from the agent)"></textarea>
+                    <button id="btn-copy-source" class="icon-btn" type="button"
+                            title="Copy to clipboard" aria-label="Copy to clipboard">
+                        <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
+                            <rect x="5" y="5" width="8" height="9" fill="none" stroke="currentColor" stroke-width="1.5"/>
+                            <path d="M3 2h8v2H5v6H3V2z" fill="currentColor"/>
+                        </svg>
+                    </button>
+                </div>
+
+                <label class="field-label" for="hl-result-prompt">Result prompt:</label>
+                <textarea id="hl-result-prompt" class="multiline" rows="10"
+                          placeholder="(enter the corrected template and press Continue)"></textarea>
+            </fieldset>
+        </section>
+
+        <!-- ═══════════════ Settings tab ═══════════════ -->
+        <section id="tab-settings" class="tab-panel">
+            <fieldset class="section">
+                <legend>LLM list</legend>
+
+                <div class="field-row">
+                    <button id="btn-llm-add" class="icon-btn" type="button"
+                            title="Add LLM" aria-label="Add LLM">
+                        <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
+                            <path d="M7 2h2v5h5v2H9v5H7V9H2V7h5V2z" fill="currentColor"/>
+                        </svg>
+                    </button>
+                    <button id="btn-llm-edit" class="icon-btn" type="button"
+                            title="Edit LLM" aria-label="Edit LLM">
+                        <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
+                            <path d="M11.5 2.5l2 2L5 13H3v-2l8.5-8.5zM13 1l.8.8-1.5 1.5-.8-.8L13 1z" fill="currentColor"/>
+                        </svg>
+                    </button>
+                    <button id="btn-llm-remove" class="icon-btn" type="button"
+                            title="Remove LLM" aria-label="Remove LLM">
+                        <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
+                            <path d="M4.3 3 8 6.7 11.7 3 13 4.3 9.3 8l3.7 3.7L11.7 13 8 9.3 4.3 13 3 11.7 6.7 8 3 4.3 4.3 3z" fill="currentColor"/>
+                        </svg>
+                    </button>
+                </div>
+                <table id="llms-table" class="data-table">
+                    <thead>
+                        <tr>
+                            <th>name</th><th>api_base</th><th>api_key</th>
+                            <th>model</th><th>temperature</th>
+                        </tr>
+                    </thead>
+                    <tbody id="llms-body">
+                        <!-- rows added by app.js -->
+                    </tbody>
+                </table>
+            </fieldset>
+
+            <fieldset class="section">
+                <legend>Roles</legend>
+                <label class="field-label" for="role-judge">LLM as Judge:</label>
+                <select id="role-judge" class="dropdown"><option value="">— not selected —</option></select>
+
+                <label class="field-label" for="role-prompts">LLM for prompts:</label>
+                <select id="role-prompts" class="dropdown"><option value="">— not selected —</option></select>
+            </fieldset>
+        </section>
+
+        <!-- ═══════════════ Status line (bridge probe) ═══════════════ -->
+        <div id="status-line" class="muted">Connecting…</div>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>

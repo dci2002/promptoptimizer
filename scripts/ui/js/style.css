@@ -1,0 +1,304 @@
+/* Prompt Optimizer — base layout (architecture §7.2) */
+
+:root {
+    --bg: #f5f6f8;
+    --panel-bg: #ffffff;
+    --border: #d0d4da;
+    --text: #22272e;
+    --muted: #7a828c;
+    --accent: #2563eb;
+    --danger: #dc2626;
+    --icon-bg: #eef1f5;
+    --icon-hover: #dbe3ee;
+    --tooltip-bg: #22272e;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+    margin: 0;
+    padding: 0;
+    height: 100%;
+    font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+    font-size: 14px;
+    color: var(--text);
+    background: var(--bg);
+}
+
+#app {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+}
+
+/* ───────────────────────── Tabs ───────────────────────── */
+
+#tabbar {
+    display: flex;
+    gap: 2px;
+    padding: 8px 12px 0;
+    background: var(--panel-bg);
+    border-bottom: 1px solid var(--border);
+}
+
+.tab-btn {
+    padding: 8px 18px;
+    border: 1px solid var(--border);
+    border-bottom: none;
+    border-radius: 6px 6px 0 0;
+    background: var(--bg);
+    color: var(--text);
+    cursor: pointer;
+    font-size: 14px;
+}
+
+.tab-btn:hover { background: var(--icon-hover); }
+
+.tab-btn.active {
+    background: var(--panel-bg);
+    font-weight: 600;
+    box-shadow: inset 0 2px 0 var(--accent);
+}
+
+.tab-panel {
+    display: none;
+    flex: 1;
+    overflow-y: auto;
+    padding: 14px;
+}
+
+.tab-panel.active { display: block; }
+
+/* ───────────────────────── Sections ───────────────────────── */
+
+.section {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--panel-bg);
+    margin: 0 0 14px;
+    padding: 12px 14px;
+}
+
+.section legend {
+    font-weight: 600;
+    padding: 0 6px;
+    color: var(--accent);
+}
+
+/* ───────────────────────── Fields ───────────────────────── */
+
+.field-label {
+    display: block;
+    margin: 8px 0 4px;
+    font-weight: 600;
+}
+
+.field-label.inline {
+    display: inline;
+    margin: 0 6px 0 0;
+}
+
+.check-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin: 4px 0;
+    cursor: pointer;
+}
+
+.field-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    margin: 4px 0;
+}
+
+.field-row .multiline { flex: 1; }
+
+/* Multiline fields — 10 lines by default (rows attr), fixed base height */
+.multiline {
+    width: 100%;
+    min-height: 180px;
+    padding: 6px 8px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-family: "Consolas", "Menlo", monospace;
+    font-size: 13px;
+    resize: vertical;
+    background: #fbfcfd;
+}
+
+.multiline:focus {
+    outline: none;
+    border-color: var(--accent);
+}
+
+.muted { color: var(--muted); font-size: 12px; }
+
+.dropdown {
+    width: 100%;
+    max-width: 420px;
+    padding: 6px 8px;
+    margin-bottom: 8px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--panel-bg);
+    font-size: 13px;
+}
+
+/* ───────────────────────── Tables ───────────────────────── */
+
+.data-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 6px;
+    font-size: 13px;
+}
+
+.data-table th, .data-table td {
+    border: 1px solid var(--border);
+    padding: 5px 8px;
+    text-align: left;
+    vertical-align: middle;
+    word-break: break-all;
+}
+
+.data-table th { background: var(--bg); font-weight: 600; }
+
+.data-table tbody tr:hover { background: #f0f4fa; }
+
+.data-table tbody tr.selected { background: #dbeafe; }
+
+/* ───────────────────────── Icon buttons + tooltips ───────────────────────── */
+
+.icon-btn {
+    width: 32px;
+    height: 32px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--icon-bg);
+    color: var(--text);
+    cursor: pointer;
+    flex-shrink: 0;
+    position: relative;
+}
+
+.icon-btn:hover:not(:disabled) {
+    background: var(--icon-hover);
+    border-color: var(--accent);
+    color: var(--accent);
+}
+
+.icon-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+/* CSS tooltip (reliable even where the title attribute is flaky) */
+.icon-btn::after {
+    content: attr(title);
+    position: absolute;
+    bottom: calc(100% + 6px);
+    left: 50%;
+    transform: translateX(-50%);
+    background: var(--tooltip-bg);
+    color: #fff;
+    font-size: 12px;
+    font-weight: 400;
+    padding: 3px 8px;
+    border-radius: 4px;
+    white-space: nowrap;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.15s;
+    z-index: 10;
+}
+
+.icon-btn:hover::after { opacity: 1; }
+
+/* ───────────────────────── Modal (base, used from Phase 2+) ───────────────────────── */
+
+.modal-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.4);
+    align-items: center;
+    justify-content: center;
+    z-index: 100;
+}
+
+.modal-overlay.open { display: flex; }
+
+.modal {
+    background: var(--panel-bg);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px 18px;
+    width: min(560px, 90vw);
+    box-shadow: 0 8px 30px rgba(0, 0, 0, 0.25);
+}
+
+.modal h3 { margin: 0 0 12px; }
+
+.modal .field-row { margin-bottom: 8px; }
+
+.modal input[type="text"],
+.modal .multiline {
+    width: 100%;
+    padding: 6px 8px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-size: 13px;
+}
+
+.modal input.multiline-5 { min-height: 100px; }
+
+.modal .dialog-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 14px;
+}
+
+.modal .dialog-error {
+    color: var(--danger);
+    font-size: 12px;
+    margin-top: 8px;
+    white-space: pre-wrap;
+}
+
+/* ───────────────────────── Status line / toasts ───────────────────────── */
+
+#status-line {
+    padding: 6px 12px;
+    border-top: 1px solid var(--border);
+    background: var(--panel-bg);
+    font-size: 12px;
+}
+
+#status-line.ok { color: #15803d; }
+#status-line.error { color: var(--danger); }
+
+/* Toast (base, used from Phase 3+) */
+.toast {
+    position: fixed;
+    right: 16px;
+    bottom: 16px;
+    background: var(--tooltip-bg);
+    color: #fff;
+    padding: 10px 14px;
+    border-radius: 8px;
+    font-size: 13px;
+    max-width: 420px;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+    z-index: 200;
+    opacity: 0;
+    transition: opacity 0.2s;
+}
+
+.toast.show { opacity: 1; }
+.toast.error { background: var(--danger); }
