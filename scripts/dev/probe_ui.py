@@ -164,6 +164,39 @@ JS_CHANGE_JUDGE_ROLE = """
 # Verify the role was persisted
 JS_VERIFY_JUDGE_ROLE = "document.getElementById('role-judge').value"
 
+# ── Paste test: simulate contextmenu on #prompt, click Paste, verify text ──
+# The app's Paste handler now calls api().get_clipboard() (Python bridge →
+# QApplication.clipboard().text()), then inserts the returned text into the
+# textarea.  We monkey-patch the bridge method to return a fixed test string,
+# so the probe works headless without a real clipboard.
+JS_PASTE_SIMULATE = """
+(() => {
+    const ta = document.getElementById('prompt');
+    ta.value = '';
+    ta.focus();
+    ta.setSelectionRange(0, 0);
+    const PASTE_TEXT = 'PASTED_TEST_LINE';
+    // Monkey-patch the bridge get_clipboard to simulate Qt clipboard read.
+    const origApi = window.pywebview && window.pywebview.api;
+    if (origApi) {
+        origApi.get_clipboard = () => Promise.resolve({ok: true, text: PASTE_TEXT});
+    }
+    // Open the context menu on the textarea.
+    ta.dispatchEvent(new MouseEvent('contextmenu', {bubbles: true, clientX: 100, clientY: 100}));
+    const item = document.querySelector('#ctx-menu .ctx-item[data-action="paste"]');
+    if (!item) {
+        if (origApi) delete origApi.get_clipboard;
+        return 'no-paste-item';
+    }
+    // Click Paste — the handler calls get_clipboard() and inserts async.
+    item.dispatchEvent(new MouseEvent('click', {bubbles: true}));
+    return 'triggered';
+})()
+"""
+
+# Step 2: verify the pasted text is in the prompt field
+JS_PASTE_VERIFY = "document.getElementById('prompt').value"
+
 
 def main() -> int:
     # Work on a copy of the real config so the probe never mutates the project.
@@ -360,6 +393,27 @@ def main() -> int:
             print(f"FAIL(3.4b): Prompts-tab HL checkbox did not sync (got {hl_prompts_after}, expected {target_hl})", flush=True); ok = False
         else:
             print("OK(3.4b): Prompts-tab HL checkbox synced with Settings flag", flush=True)
+
+        # ── 3.6 PASTE (context menu Copy/Cut/Paste) ────────────────────
+        # The Paste handler calls api().get_clipboard() (async) and inserts
+        # the result.  We poll the field value until the async insertion
+        # completes (or timeout).
+        paste_result = window.evaluate_js(JS_PASTE_SIMULATE)
+        print(f"[probe] 3.6 PASTE: trigger={paste_result!r}", flush=True)
+        if paste_result == "no-paste-item":
+            print("FAIL(3.6): context menu Paste item not found", flush=True); ok = False
+        else:
+            paste_value = ""
+            for _ in range(20):
+                time.sleep(0.3)
+                paste_value = window.evaluate_js(JS_PASTE_VERIFY) or ""
+                if "PASTED_TEST_LINE" in str(paste_value):
+                    break
+            print(f"[probe] 3.6 PASTE: verify={paste_value!r}", flush=True)
+            if "PASTED_TEST_LINE" not in str(paste_value):
+                print(f"FAIL(3.6): pasted text not in prompt field: {paste_value!r}", flush=True); ok = False
+            else:
+                print("OK(3.6): paste via context menu inserted text into prompt", flush=True)
 
         # ── verify on-disk persistence ──────────────────────────────────
         # Note: scenario 3.3 removes probe-new, so it must NOT be on disk.

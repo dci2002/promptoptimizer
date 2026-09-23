@@ -14,7 +14,12 @@ It is optional, but recommended to be updated as the project evolves.
 - [2026-09-22 14:20:00] Errors from core are returned as `{"ok": False, "error": "..."}` dicts at the bridge boundary; exceptions only for programmer errors.
 - [2026-09-22 14:20:00] Variable placeholders use the strict regex `\{\{(\w+)\}\}` — same as the template.
 - [2026-09-22 14:20:00] ConfigManager.save() is atomic: write to a temp file in the same directory, then `os.replace`.
-
+- [2026-09-23 12:22:00] `build_final_prompt` returns the final prompt **string** (not a file path) — GUI callers need the text. The template returned a path; this was adapted for the GUI context. The fully-substituted text is also written to `final_prompt.txt` for the LLM2 executor.
+- [2026-09-23 12:22:00] `write_run_files` accepts `variables` as a `dict[str, str]` (not a list of dicts) — the JS `[{name, value}]` array is normalized to a dict at the bridge boundary (`Api.run_validation`).
+- [2026-09-23 12:22:00] UI validation is debounced (400 ms) via `scheduleValidation()` / `runValidation()` — the strip re-renders after any prompt/result/variable/role change without flooding the bridge on every keystroke.
+- [2026-09-23 12:22:00] Variable names are validated client-side with `^\w+$` before being added to the table, matching the server-side extraction regex.
+- [2026-09-23 13:39:00] Clipboard access in Qt WebEngine: `navigator.clipboard.readText()` crashes (setFeaturePermission TypeError); `document.execCommand("paste")` doesn't fire native paste events. The reliable approach is a Python bridge method using `QApplication.clipboard().text()` / `.setText()`. Copy/Cut via `document.execCommand("copy"/"cut")` work fine without a bridge.
+ 
 ## Architectural Patterns
 
 - [2026-09-22 14:20:00] Two-LLM scheme (from the template): llm1 = ReAct agent (`create_react_agent`, 6 fixed tools), llm2 = plain `ChatOpenAI` executor exposed as the zero-argument `llm2()` tool.

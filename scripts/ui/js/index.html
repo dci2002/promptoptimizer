@@ -44,6 +44,18 @@
                             <path d="M7 2h2v5h5v2H9v5H7V9H2V7h5V2z" fill="currentColor"/>
                         </svg>
                     </button>
+                    <button id="btn-var-edit" class="icon-btn" type="button"
+                            title="Edit variable" aria-label="Edit variable">
+                        <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
+                            <path d="M11.5 1.5a1 1 0 0 1 1.4 0l1.6 1.6a1 1 0 0 1 0 1.4L5 13 2 14l1-3 9.5-9.5z" fill="currentColor"/>
+                        </svg>
+                    </button>
+                    <button id="btn-var-refresh" class="icon-btn" type="button"
+                            title="Extract variables from prompt" aria-label="Extract variables from prompt">
+                        <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
+                            <path d="M8 2a6 6 0 0 0-6 6h2a4 4 0 0 1 7.74 1.24l-1.74-1.24A6 6 0 0 0 8 2zm6 6a6 6 0 0 0-6-6v2a4 4 0 0 1 4 4h-2l4 3 4-3h-2a4 4 0 0 0-2-3z" fill="currentColor"/>
+                        </svg>
+                    </button>
                     <button id="btn-var-remove" class="icon-btn" type="button"
                             title="Remove variable" aria-label="Remove variable">
                         <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
@@ -60,6 +72,7 @@
                         <!-- rows added by app.js -->
                     </tbody>
                 </table>
+                <div id="validation-strip" class="validation-strip" style="display:none;"></div>
             </fieldset>
 
             <!-- Execution -->
@@ -193,6 +206,28 @@
                 <div class="dialog-actions">
                     <button id="llm-dialog-cancel" type="button">Cancel</button>
                     <button id="llm-dialog-save" type="button" class="primary">Save</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- ═══════════════ Variable dialog (in-page modal, Phase 3) ═══════════════ -->
+        <div id="var-dialog-overlay" class="modal-overlay">
+            <div class="modal" role="dialog" aria-modal="true" aria-labelledby="var-dialog-title">
+                <h3 id="var-dialog-title">Add variable</h3>
+
+                <label class="field-label" for="var-name">Variable name:</label>
+                <input type="text" id="var-name" class="dialog-input"
+                       placeholder="e.g. city">
+
+                <label class="field-label" for="var-value">Value:</label>
+                <textarea id="var-value" class="dialog-input multiline multiline-5" rows="5"
+                          placeholder="variable value"></textarea>
+
+                <div id="var-dialog-error" class="dialog-error"></div>
+
+                <div class="dialog-actions">
+                    <button id="var-dialog-cancel" type="button">Cancel</button>
+                    <button id="var-dialog-save" type="button" class="primary">Save</button>
                 </div>
             </div>
         </div>

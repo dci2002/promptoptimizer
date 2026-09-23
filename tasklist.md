@@ -100,34 +100,34 @@ restored from `config.yaml`.
 
 ## Phase 3 — Prompt I/O core + Prompts tab form (GUI test: variables & validation)
 
-- [ ] **T3.1** `core/prompt_io.py`: `extract_variables_from_prompt` (regex
+- [x] **T3.1** `core/prompt_io.py`: `extract_variables_from_prompt` (regex
       `\{\{(\w+)\}\}`, deduplicated), `write_run_files(base_dir, template,
       expected, variables)` (fresh `workspace/`: prompt.txt, result.txt,
       `{var}.txt` per variable), `build_final_prompt`, `load_expected_result`.
-- [ ] **T3.2** `runner.validate_run_inputs(config_data, template,
+- [x] **T3.2** `runner.validate_run_inputs(config_data, template,
       variables) -> list[str]` per req 3.6: roles selected + LLMs exist,
       prompt non-empty, every `{{var}}` in the prompt has a non-empty value.
-- [ ] **T3.3** `Api`: implement `run_validation(template, result,
+- [x] **T3.3** `Api`: implement `run_validation(template, result,
       variables)` — returns `{"ok": True}` or `{"ok": False, "errors": [...]}`
       (no files written yet — pure check).
-- [ ] **T3.4** `scripts/dev/smoke_core.py` — headless smoke: load config,
+- [x] **T3.4** `scripts/dev/smoke_core.py` — headless smoke: load config,
       extract variables from a sample template, write `workspace/` files,
       `build_final_prompt`, print the result (verifies Phase 1–3 core
       without the window).
-- [ ] **T3.5** `app.js` — Prompts tab form: Prompt field (multiline, 10
+- [x] **T3.5** `app.js` — Prompts tab form: Prompt field (multiline, 10
       lines), Result field (multiline, 10 lines); variables table
       (Variable | Value) with Add/Remove icon buttons.
-- [ ] **T3.6** `variables.html` + `variables.js` — modal: "Variable name"
+- [x] **T3.6** `variables.html` + `variables.js` — modal: "Variable name"
       (single-line) + "Value" (multiline, 5 lines); Save → row added;
       Remove → row deleted; duplicate variable name rejected client-side.
-- [ ] **T3.7** `app.js` — validation feedback: on any change of
+- [x] **T3.7** `app.js` — validation feedback: on any change of
       Prompt/Result/variables/roles, re-run `api.run_validation` (debounced
       400 ms) and render a small warning strip under the form listing the
       errors from req 3.6 (or nothing when valid).
-- [ ] **T3.8** Unit tests `scripts/tests/test_prompt_io.py`: extraction
+- [x] **T3.8** Unit tests `scripts/tests/test_prompt_io.py`: extraction
       (incl. repeated variables), file writing, substitution with a missing
       variable file (empty string + warning), UTF-8.
-- [ ] **T3.9** Unit tests `scripts/tests/test_validation.py`: full 3.6
+- [x] **T3.9** Unit tests `scripts/tests/test_validation.py`: full 3.6
       matrix (each failure mode individually + all-valid case).
 
 **GUI test (Phase 3):** enter a prompt containing `{{city}}` and `{{topic}}`

@@ -8,6 +8,7 @@ Phase 1: ``get_config`` implemented.
 Phase 2: Settings-tab methods implemented on top of
 :class:`~core.config.ConfigManager` — ``list_llms``, ``save_llm``,
 ``remove_llm``, ``get_roles``, ``set_role``, ``get_hl``, ``set_hl``.
+Phase 3: Prompts-tab validation — ``run_validation``.
 Every other method from architecture §3.6 is a stub returning
 ``{"ok": False, "error": "not implemented"}``.
 
@@ -23,6 +24,23 @@ import traceback
 from typing import Any, Optional
 
 from core.config import ConfigError, ConfigManager
+from core.prompt_io import validate_run_inputs
+
+# ── Clipboard access (Qt-based, used by get_clipboard / copy_to_clipboard) ──
+# Imported lazily to avoid breaking headless test environments where Qt is
+# not installed.  QApplication.clipboard() works even before the window is
+# shown, as long as the QApplication instance exists (guaranteed by the
+# PyQt backend of pywebview).
+_QT_AVAILABLE = False
+try:
+    from PyQt6.QtWidgets import QApplication
+    _QT_AVAILABLE = True
+except ImportError:
+    try:
+        from PyQt5.QtWidgets import QApplication  # type: ignore
+        _QT_AVAILABLE = True
+    except ImportError:
+        pass
 
 __all__ = ["Api"]
 
@@ -163,10 +181,33 @@ class Api:
         except Exception as e:
             return {"ok": False, "error": f"set_hl failed: {e}"}
 
-    # ------------------------------------------- stubs (implemented later)
+    # ------------------------------------------------- Phase 3 — Prompts
     def run_validation(self, template: str, result: str, variables: list) -> dict:
-        return _stub()
+        """Validate the prompt settings (req 3.6) — pure check, no files.
 
+        ``variables`` is a list of ``{"name": str, "value": str}`` dicts
+        (the JS variables table rows). Returns ``{"ok": True}`` when valid,
+        or ``{"ok": False, "errors": [...]}`` when not.
+        """
+        try:
+            # Normalise the JS variables array into a dict.
+            var_map: dict[str, str] = {}
+            if isinstance(variables, list):
+                for row in variables:
+                    if isinstance(row, dict):
+                        name = str(row.get("name") or "").strip()
+                        value = str(row.get("value") or "")
+                        if name:
+                            var_map[name] = value
+
+            errors = validate_run_inputs(self._config.data, str(template or ""), var_map)
+            if errors:
+                return {"ok": False, "errors": errors}
+            return {"ok": True}
+        except Exception as e:
+            return {"ok": False, "errors": [f"run_validation failed: {e}"]}
+
+    # ------------------------------------------- stubs (implemented later)
     def run_prompt(self, template: str, result: str, variables: list) -> dict:
         return _stub()
 
@@ -179,8 +220,42 @@ class Api:
     def get_state(self) -> dict:
         return _stub()
 
+    # ------------------------------------------------- Phase 3 — clipboard
+    def get_clipboard(self) -> dict:
+        """Return the current system clipboard text.
+
+        Uses ``QApplication.clipboard().text()`` — works reliably in the
+        Qt WebEngine backend without triggering permission dialogs (unlike
+        ``navigator.clipboard.readText()``).
+
+        ``{"ok": True, "text": "..."}`` or ``{"ok": False, "error": ...}``.
+        """
+        try:
+            if not _QT_AVAILABLE:
+                return {"ok": False, "error": "Qt clipboard not available"}
+            app = QApplication.instance()
+            if app is None:
+                return {"ok": False, "error": "QApplication not running"}
+            text = app.clipboard().text()
+            return {"ok": True, "text": text}
+        except Exception as e:
+            return {"ok": False, "error": f"get_clipboard failed: {e}"}
+
     def copy_to_clipboard(self, text: str) -> dict:
-        return _stub()
+        """Write ``text`` to the system clipboard.
+
+        ``{"ok": True}`` or ``{"ok": False, "error": ...}``.
+        """
+        try:
+            if not _QT_AVAILABLE:
+                return {"ok": False, "error": "Qt clipboard not available"}
+            app = QApplication.instance()
+            if app is None:
+                return {"ok": False, "error": "QApplication not running"}
+            app.clipboard().setText(str(text or ""))
+            return {"ok": True}
+        except Exception as e:
+            return {"ok": False, "error": f"copy_to_clipboard failed: {e}"}
 
     def get_llm_dialog(self) -> dict:
         return _stub()

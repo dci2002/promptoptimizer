@@ -67,7 +67,9 @@
         roles: { judge: "", prompts: "" },
         hl: false,
         max_attempts: 30,
-        selectedLlm: null  // name of the selected table row
+        selectedLlm: null, // name of the selected table row
+        variables: [],     // [{name, value}]
+        selectedVar: null  // name of the selected variable row
     };
 
     /* ── LLM table rendering ── */
@@ -161,6 +163,7 @@
             }
             state.roles = res.roles || state.roles;
             renderRoleDropdowns();
+            scheduleValidation();
         });
     }
 
@@ -209,6 +212,7 @@
             renderRoleDropdowns();
             hlFlagSettings.checked = state.hl;
             if (hlFlag) hlFlag.checked = state.hl;
+            scheduleValidation();
         });
     }
 
@@ -344,6 +348,254 @@
         });
     }
 
+    /* ═══════════════════════════ Phase 3 — Prompts tab: variables + validation ═══════════════════════════ */
+
+    var promptField = document.getElementById("prompt");
+    var resultField = document.getElementById("result");
+    var variablesBody = document.getElementById("variables-body");
+    var variablesSummary = document.getElementById("variables-summary");
+    var validationStrip = document.getElementById("validation-strip");
+    var varOverlay = document.getElementById("var-dialog-overlay");
+    var varName = document.getElementById("var-name");
+    var varValue = document.getElementById("var-value");
+    var varError = document.getElementById("var-dialog-error");
+    var btnVarRemove = document.getElementById("btn-var-remove");
+    var btnVarEdit = document.getElementById("btn-var-edit");
+
+    /* ── Variables table rendering ── */
+
+    function renderVariablesTable() {
+        variablesBody.innerHTML = "";
+        state.variables.forEach(function (v) {
+            var tr = document.createElement("tr");
+            tr.className = "row-clickable" + (state.selectedVar === v.name ? " selected" : "");
+            tr.dataset.name = v.name;
+
+            var tdName = document.createElement("td");
+            tdName.textContent = v.name;
+            tr.appendChild(tdName);
+
+            var tdValue = document.createElement("td");
+            tdValue.textContent = v.value;
+            tr.appendChild(tdValue);
+
+            tr.addEventListener("click", function () {
+                state.selectedVar = v.name;
+                markVarRowSelected();
+            });
+            tr.addEventListener("dblclick", function () {
+                state.selectedVar = v.name;
+                markVarRowSelected();
+                openVarEditDialog();
+            });
+
+            variablesBody.appendChild(tr);
+        });
+        updateVariablesUI();
+    }
+
+    function markVarRowSelected() {
+        variablesBody.querySelectorAll("tr").forEach(function (row) {
+            row.classList.toggle("selected", row.dataset.name === state.selectedVar);
+        });
+        updateVariablesUI();
+    }
+
+    function updateVariablesUI() {
+        btnVarRemove.disabled = !state.selectedVar;
+        btnVarEdit.disabled = !state.selectedVar;
+        variablesSummary.textContent = state.variables.length
+            ? state.variables.length + " variable" + (state.variables.length > 1 ? "s" : "")
+            : "no variables";
+    }
+
+    function getSelectedVar() {
+        if (!state.selectedVar) return null;
+        for (var i = 0; i < state.variables.length; i++) {
+            if (state.variables[i].name === state.selectedVar) return state.variables[i];
+        }
+        return null;
+    }
+
+    function hasVariableName(name) {
+        return state.variables.some(function (v) { return v.name === name; });
+    }
+
+    /* ── Variable dialog (add / edit) ── */
+
+    var varDialogMode = "add"; // "add" | "edit"
+
+    function openVarDialog() {
+        varDialogMode = "add";
+        varName.value = "";
+        varName.readOnly = false;
+        varValue.value = "";
+        varError.textContent = "";
+        varOverlay.classList.add("open");
+        varName.focus();
+    }
+
+    function openVarEditDialog() {
+        var v = getSelectedVar();
+        if (!v) {
+            toast("Select a row in the Variables table first", "error");
+            return;
+        }
+        varDialogMode = "edit";
+        varName.value = v.name;
+        varName.readOnly = true;
+        varValue.value = v.value;
+        varError.textContent = "";
+        varOverlay.classList.add("open");
+        varValue.focus();
+    }
+
+    function closeVarDialog() {
+        varOverlay.classList.remove("open");
+    }
+
+    function onVarSave() {
+        var name = varName.value.trim();
+        if (!name) {
+            varError.textContent = "Variable name is required";
+            return;
+        }
+        if (!/^\w+$/.test(name)) {
+            varError.textContent = "Variable name may contain only letters, digits and underscore";
+            return;
+        }
+        if (varDialogMode === "add") {
+            if (hasVariableName(name)) {
+                varError.textContent = "Variable '" + name + "' already exists";
+                return;
+            }
+            state.variables.push({ name: name, value: varValue.value });
+            state.selectedVar = name;
+            closeVarDialog();
+            renderVariablesTable();
+            toast("Variable added: " + name, "ok");
+        } else {
+            // edit mode
+            for (var i = 0; i < state.variables.length; i++) {
+                if (state.variables[i].name === name) {
+                    state.variables[i].value = varValue.value;
+                    break;
+                }
+            }
+            closeVarDialog();
+            renderVariablesTable();
+            toast("Variable saved: " + name, "ok");
+        }
+        scheduleValidation();
+    }
+
+    function onVarRemove() {
+        var v = getSelectedVar();
+        if (!v) return;
+        state.variables = state.variables.filter(function (x) { return x.name !== v.name; });
+        state.selectedVar = null;
+        renderVariablesTable();
+        toast("Variable removed: " + v.name, "ok");
+        scheduleValidation();
+    }
+
+    /* ── Refresh: extract variables from prompt into the table ── */
+
+    function onVarRefresh() {
+        var text = promptField.value;
+        var re = /\{\{(\w+)\}\}/g;
+        var seen = {};
+        var names = [];
+        var m;
+        while ((m = re.exec(text)) !== null) {
+            if (!seen[m[1]]) {
+                seen[m[1]] = true;
+                names.push(m[1]);
+            }
+        }
+        if (!names.length) {
+            toast("No {{variables}} found in the prompt", "info");
+            return;
+        }
+        var added = 0;
+        names.forEach(function (name) {
+            if (!hasVariableName(name)) {
+                state.variables.push({ name: name, value: "" });
+                added++;
+            }
+        });
+        if (added > 0) {
+            renderVariablesTable();
+            toast("Extracted " + names.length + " variable" + (names.length > 1 ? "s" : "") + " from prompt" + (added > 1 ? " (" + added + " new)" : ""), "ok");
+        } else {
+            toast("All " + names.length + " variable" + (names.length > 1 ? "s" : "") + " already present", "ok");
+        }
+        scheduleValidation();
+    }
+
+    /* ── Validation feedback (req 3.6) — debounced ── */
+
+    var validationTimer = null;
+
+    function scheduleValidation() {
+        if (validationTimer) clearTimeout(validationTimer);
+        validationTimer = setTimeout(runValidation, 400);
+    }
+
+    function runValidation() {
+        var a = api();
+        if (!a || !a.run_validation) {
+            validationStrip.style.display = "none";
+            return;
+        }
+        var variables = state.variables.map(function (v) { return { name: v.name, value: v.value }; });
+        a.run_validation(promptField.value, resultField.value, variables).then(function (res) {
+            if (!res || res.ok === false && !res.errors) {
+                // Bridge-level error (res.ok === false with .error, not .errors).
+                if (res && res.error) {
+                    validationStrip.textContent = res.error;
+                    validationStrip.style.display = "block";
+                }
+                return;
+            }
+            if (res.ok) {
+                validationStrip.textContent = "";
+                validationStrip.style.display = "none";
+            } else {
+                validationStrip.textContent = (res.errors || []).join("  ·  ");
+                validationStrip.style.display = "block";
+            }
+        }).catch(function (err) {
+            validationStrip.textContent = "validation failed: " + err;
+            validationStrip.style.display = "block";
+        });
+    }
+
+    /* ── Prompts-tab event wiring ── */
+
+    document.getElementById("btn-var-add").addEventListener("click", openVarDialog);
+    btnVarEdit.addEventListener("click", openVarEditDialog);
+    btnVarRemove.addEventListener("click", onVarRemove);
+    document.getElementById("btn-var-refresh").addEventListener("click", onVarRefresh);
+    document.getElementById("var-dialog-save").addEventListener("click", onVarSave);
+    document.getElementById("var-dialog-cancel").addEventListener("click", closeVarDialog);
+
+    // Click on the overlay backdrop closes the dialog.
+    varOverlay.addEventListener("click", function (e) {
+        if (e.target === varOverlay) closeVarDialog();
+    });
+
+    // Escape closes the variable dialog.
+    [varName, varValue].forEach(function (input) {
+        input.addEventListener("keydown", function (e) {
+            if (e.key === "Escape") closeVarDialog();
+        });
+    });
+
+    // Re-validate on any change of the prompt/result fields.
+    promptField.addEventListener("input", scheduleValidation);
+    resultField.addEventListener("input", scheduleValidation);
+
     /* ── Settings event wiring ── */
 
     document.getElementById("btn-llm-add").addEventListener("click", function () {
@@ -400,6 +652,8 @@
         renderRoleDropdowns();
         hlFlagSettings.checked = state.hl;
         if (hlFlag) hlFlag.checked = state.hl;
+        renderVariablesTable();
+        scheduleValidation();
     }
 
     function probeBridge() {
@@ -444,6 +698,139 @@
             }, 250);
         }
     }
+
+    /* ── Context menu (Copy / Cut / Paste) for all text fields ── */
+
+    (function initContextMenu() {
+        var menu = document.createElement("div");
+        menu.id = "ctx-menu";
+        menu.style.display = "none";
+
+        var fields = [
+            { label: "Copy",   action: "copy"   },
+            { label: "Cut",    action: "cut"    },
+            { label: "Paste",  action: "paste"  },
+        ];
+
+        fields.forEach(function (f) {
+            var item = document.createElement("div");
+            item.className = "ctx-item";
+            item.textContent = f.label;
+            item.dataset.action = f.action;
+            item.addEventListener("click", function (e) {
+                e.preventDefault();
+                e.stopPropagation();
+                var sel = document.getSelection();
+                var editable = menu._target;
+                if (!editable) return;
+                var isTextarea = editable.tagName === "TEXTAREA";
+                var value = isTextarea ? editable.value : (sel ? sel.toString() : "");
+
+                if (f.action === "copy") {
+                    if (isTextarea) {
+                        var start = editable.selectionStart;
+                        var end = editable.selectionEnd;
+                        if (start === end) {
+                            editable.select();
+                        }
+                        document.execCommand("copy");
+                        editable.setSelectionRange(start, end);
+                    } else {
+                        document.execCommand("copy");
+                    }
+                } else if (f.action === "cut") {
+                    if (isTextarea) {
+                        var s = editable.selectionStart;
+                        var en = editable.selectionEnd;
+                        if (s === en) editable.select();
+                        document.execCommand("cut");
+                        editable.setSelectionRange(s, en);
+                    } else {
+                        document.execCommand("cut");
+                    }
+                } else if (f.action === "paste") {
+                    // Read clipboard text via the Python bridge (QApplication.clipboard()),
+                    // then insert it at the cursor position.  This avoids both the
+                    // navigator.clipboard permission crash and the non-firing native
+                    // paste event in Qt WebEngine.
+                    var _api = api();
+                    if (_api && _api.get_clipboard) {
+                        var target = editable;
+                        var wasTextarea = isTextarea;
+                        _api.get_clipboard().then(function (res) {
+                            if (res && res.ok && res.text) {
+                                var text = res.text;
+                                if (wasTextarea) {
+                                    var pos = target.selectionStart || 0;
+                                    var end = target.selectionEnd || pos;
+                                    var before = target.value.substring(0, pos);
+                                    var after = target.value.substring(end);
+                                    target.value = before + text + after;
+                                    target.setSelectionRange(pos + text.length, pos + text.length);
+                                } else {
+                                    // contentEditable or input: use execCommand insertText
+                                    document.execCommand("insertText", false, text);
+                                }
+                                target.dispatchEvent(new Event("input", { bubbles: true }));
+                            } else if (res && !res.ok) {
+                                toast("Paste failed: " + res.error, "error");
+                            }
+                        }).catch(function (err) {
+                            toast("Paste failed: " + err, "error");
+                        });
+                    } else {
+                        toast("Bridge not ready — cannot paste", "error");
+                    }
+                }
+                hideMenu();
+            });
+            menu.appendChild(item);
+        });
+
+        document.body.appendChild(menu);
+
+        function showMenu(x, y, target) {
+            menu._target = target;
+            menu.style.display = "block";
+            // Keep within viewport
+            var rect = menu.getBoundingClientRect();
+            var maxX = window.innerWidth - rect.width - 4;
+            var maxY = window.innerHeight - rect.height - 4;
+            menu.style.left = Math.min(x, maxX) + "px";
+            menu.style.top = Math.min(y, maxY) + "px";
+        }
+
+        function hideMenu() {
+            menu.style.display = "none";
+            menu._target = null;
+        }
+
+        document.addEventListener("contextmenu", function (e) {
+            var t = e.target;
+            var isEditable =
+                t.tagName === "TEXTAREA" ||
+                t.tagName === "INPUT" ||
+                t.isContentEditable;
+            if (!isEditable) {
+                hideMenu();
+                return; // allow default context menu on non-editable areas
+            }
+            e.preventDefault();
+            if (t.tagName === "TEXTAREA") t.focus();
+            showMenu(e.clientX, e.clientY, t);
+        });
+
+        // Hide on click anywhere else, scroll, or Escape.
+        document.addEventListener("click", function (e) {
+            if (!menu.contains(e.target)) hideMenu();
+        });
+        document.addEventListener("scroll", hideMenu, true);
+        document.addEventListener("keydown", function (e) {
+            if (e.key === "Escape") hideMenu();
+        });
+        // Hide when window loses focus.
+        window.addEventListener("blur", hideMenu);
+    })();
 
     if (document.readyState === "loading") {
         document.addEventListener("DOMContentLoaded", probeBridge);
