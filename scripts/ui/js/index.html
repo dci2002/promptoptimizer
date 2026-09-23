@@ -20,7 +20,17 @@
             <fieldset class="section">
                 <legend>Prompt settings</legend>
 
-                <label class="field-label" for="prompt">Prompt:</label>
+                <div class="field-row">
+                    <label class="field-label" for="prompt">Prompt:</label>
+                    <span class="field-row-spacer"></span>
+                    <button id="btn-run-load" class="icon-btn" type="button"
+                            title="Load from workspace files" aria-label="Load from workspace files">
+                        <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
+                            <path d="M2 3h12v2H2V3zm2 4h8v2H4V7zm2 4h4v2H6v-2z" fill="currentColor"/>
+                            <path d="M13 7l2 2-2 2" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                        </svg>
+                    </button>
+                </div>
                 <textarea id="prompt" class="multiline" rows="10"
                           placeholder="Prompt template ({{variable}} placeholders supported)"></textarea>
 

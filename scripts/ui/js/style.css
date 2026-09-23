@@ -115,6 +115,8 @@ html, body {
 
 .field-row .multiline { flex: 1; }
 
+.field-row-spacer { flex: 1; }
+
 /* Multiline fields — 10 lines by default (rows attr), fixed base height */
 .multiline {
     width: 100%;

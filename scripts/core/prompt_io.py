@@ -31,6 +31,7 @@ __all__ = [
     "write_run_files",
     "build_final_prompt",
     "load_expected_result",
+    "load_run_data",
     "validate_run_inputs",
 ]
 
@@ -152,6 +153,53 @@ def load_expected_result(base_dir: str) -> str:
     result_path = os.path.join(base_dir, "result.txt")
     with open(result_path, "r", encoding="utf-8") as f:
         return f.read().strip()
+
+
+def load_run_data(base_dir: str) -> dict:
+    """Load prompt, result and variable values from a run directory.
+
+    Reads:
+    - ``base_dir/prompt.txt`` → the prompt template;
+    - ``base_dir/result.txt`` → the expected result;
+    - extracts ``{{var}}`` names from the prompt, then reads each
+      ``base_dir/{var}.txt`` for the variable values.
+
+    Returns
+    -------
+    dict
+        ``{"prompt": str, "result": str, "variables": [{"name", "value"}, ...]}``
+
+    Raises
+    ------
+    FileNotFoundError
+        If ``prompt.txt`` does not exist (the directory is not a valid run dir).
+    """
+    prompt_path = os.path.join(base_dir, "prompt.txt")
+    if not os.path.isfile(prompt_path):
+        raise FileNotFoundError(f"prompt.txt not found in {base_dir!r}")
+
+    with open(prompt_path, "r", encoding="utf-8") as f:
+        prompt = f.read()
+
+    # Result (optional — may not exist if only partially written).
+    result_path = os.path.join(base_dir, "result.txt")
+    result = ""
+    if os.path.isfile(result_path):
+        with open(result_path, "r", encoding="utf-8") as f:
+            result = f.read().strip()
+
+    # Variables: extract names from prompt, then read each {var}.txt.
+    var_names = extract_variables_from_prompt(prompt)
+    variables: list[dict] = []
+    for name in var_names:
+        var_path = os.path.join(base_dir, f"{name}.txt")
+        value = ""
+        if os.path.isfile(var_path):
+            with open(var_path, "r", encoding="utf-8") as f:
+                value = f.read()
+        variables.append({"name": name, "value": value})
+
+    return {"prompt": prompt, "result": result, "variables": variables}
 
 
 # ─────────────────────────── Validation (req 3.6) ───────────────────────────

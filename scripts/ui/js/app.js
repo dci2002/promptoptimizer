@@ -533,6 +533,40 @@
         scheduleValidation();
     }
 
+    /* ── Load from workspace files ── */
+
+    function onRunLoad() {
+        var _api = api();
+        if (!_api || !_api.load_run_data) {
+            toast("Bridge not ready", "error");
+            return;
+        }
+        _api.load_run_data().then(function (res) {
+            if (!res || !res.ok) {
+                toast("Load failed: " + (res && res.error ? res.error : "unknown error"), "error");
+                return;
+            }
+            // Fill the prompt and result fields.
+            promptField.value = res.prompt || "";
+            resultField.value = res.result || "";
+            // Fill the variables table (extracted from prompt + file values).
+            state.variables = (res.variables || []).map(function (v) {
+                return { name: v.name, value: v.value || "" };
+            });
+            state.selectedVar = null;
+            renderVariablesTable();
+            toast(
+                "Loaded: prompt, result, " +
+                (res.variables || []).length + " variable" +
+                ((res.variables || []).length !== 1 ? "s" : ""),
+                "ok"
+            );
+            scheduleValidation();
+        }).catch(function (err) {
+            toast("Load failed: " + err, "error");
+        });
+    }
+
     /* ── Validation feedback (req 3.6) — debounced ── */
 
     var validationTimer = null;
@@ -577,6 +611,7 @@
     btnVarEdit.addEventListener("click", openVarEditDialog);
     btnVarRemove.addEventListener("click", onVarRemove);
     document.getElementById("btn-var-refresh").addEventListener("click", onVarRefresh);
+    document.getElementById("btn-run-load").addEventListener("click", onRunLoad);
     document.getElementById("var-dialog-save").addEventListener("click", onVarSave);
     document.getElementById("var-dialog-cancel").addEventListener("click", closeVarDialog);
 

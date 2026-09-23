@@ -50,7 +50,7 @@ def main() -> int:
         return 1
 
     # 2. Create the JS ↔ Python bridge.
-    api = Api(config)
+    api = Api(config, base_dir=os.path.join(PROJECT_ROOT, "workspace"))
 
     # 3. Create the window and run the loop.
     window = webview.create_window(

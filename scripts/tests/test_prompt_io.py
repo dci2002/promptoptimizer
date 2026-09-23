@@ -21,6 +21,7 @@ from core.prompt_io import (
     write_run_files,
     build_final_prompt,
     load_expected_result,
+    load_run_data,
 )
 
 
@@ -201,3 +202,87 @@ class TestLoadExpectedResult:
             with open(os.path.join(tmp, "result.txt"), "w", encoding="utf-8") as f:
                 f.write("line1\nline2\nline3")
             assert load_expected_result(tmp) == "line1\nline2\nline3"
+
+
+# ───────────────────────── load_run_data ─────────────────────────
+
+
+class TestLoadRunData:
+    def test_full_roundtrip(self):
+        """write_run_files → load_run_data returns the same data."""
+        with tempfile.TemporaryDirectory() as tmp:
+            template = "Hello {{name}} in {{city}}"
+            result = "Expected answer"
+            variables = {"name": "Alice", "city": "Moscow"}
+            write_run_files(tmp, template, result, variables)
+            data = load_run_data(tmp)
+            assert data["prompt"] == template
+            assert data["result"] == result
+            assert data["variables"] == [
+                {"name": "name", "value": "Alice"},
+                {"name": "city", "value": "Moscow"},
+            ]
+
+    def test_missing_prompt_raises(self):
+        """If prompt.txt is absent, FileNotFoundError is raised."""
+        with tempfile.TemporaryDirectory() as tmp:
+            with pytest.raises(FileNotFoundError):
+                load_run_data(tmp)
+
+    def test_missing_result_returns_empty(self):
+        """If result.txt is absent, result is ''."""
+        with tempfile.TemporaryDirectory() as tmp:
+            with open(os.path.join(tmp, "prompt.txt"), "w", encoding="utf-8") as f:
+                f.write("no vars")
+            data = load_run_data(tmp)
+            assert data["prompt"] == "no vars"
+            assert data["result"] == ""
+            assert data["variables"] == []
+
+    def test_missing_variable_file_returns_empty_value(self):
+        """If a variable file is absent, the value is ''."""
+        with tempfile.TemporaryDirectory() as tmp:
+            template = "Hi {{name}} and {{topic}}"
+            write_run_files(tmp, template, "", {"name": "Bob"})
+            # topic.txt was NOT written
+            data = load_run_data(tmp)
+            assert data["variables"] == [
+                {"name": "name", "value": "Bob"},
+                {"name": "topic", "value": ""},
+            ]
+
+    def test_no_variables(self):
+        """Prompt with no {{var}} → empty variables list."""
+        with tempfile.TemporaryDirectory() as tmp:
+            with open(os.path.join(tmp, "prompt.txt"), "w", encoding="utf-8") as f:
+                f.write("plain prompt")
+            data = load_run_data(tmp)
+            assert data["variables"] == []
+
+    def test_cyrillic_variables(self):
+        """Cyrillic variable names round-trip correctly."""
+        with tempfile.TemporaryDirectory() as tmp:
+            template = "Город: {{город}}, тема: {{тема}}"
+            write_run_files(tmp, template, "", {"город": "Казань", "тема": "LLM"})
+            data = load_run_data(tmp)
+            assert data["variables"] == [
+                {"name": "город", "value": "Казань"},
+                {"name": "тема", "value": "LLM"},
+            ]
+
+    def test_variable_order_matches_prompt(self):
+        """Variables are returned in prompt order, not dict insertion order."""
+        with tempfile.TemporaryDirectory() as tmp:
+            template = "{{z}} {{a}} {{m}}"
+            write_run_files(tmp, template, "", {"a": "2", "m": "3", "z": "1"})
+            data = load_run_data(tmp)
+            assert [v["name"] for v in data["variables"]] == ["z", "a", "m"]
+
+    def test_multiline_values_preserved(self):
+        """Multi-line variable values are preserved (not stripped)."""
+        with tempfile.TemporaryDirectory() as tmp:
+            template = "{{text}}"
+            value = "line1\nline2\nline3"
+            write_run_files(tmp, template, "", {"text": value})
+            data = load_run_data(tmp)
+            assert data["variables"][0]["value"] == value

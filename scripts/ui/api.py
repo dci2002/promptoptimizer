@@ -19,12 +19,13 @@ escape to the JS side.
 
 from __future__ import annotations
 
+import os
 import traceback
 
 from typing import Any, Optional
 
 from core.config import ConfigError, ConfigManager
-from core.prompt_io import validate_run_inputs
+from core.prompt_io import load_run_data, validate_run_inputs
 
 # ── Clipboard access (Qt-based, used by get_clipboard / copy_to_clipboard) ──
 # Imported lazily to avoid breaking headless test environments where Qt is
@@ -52,10 +53,16 @@ def _stub() -> dict:
 
 class Api:
     """JS ↔ Python bridge. Constructed by ``main.app.main()`` with a loaded
-    :class:`~core.config.ConfigManager`."""
+    :class:`~core.config.ConfigManager` and an optional workspace base dir."""
 
-    def __init__(self, config: ConfigManager) -> None:
+    def __init__(self, config: ConfigManager, base_dir: str | None = None) -> None:
         self._config = config
+        # Default to <project_root>/workspace (parent of the scripts/ dir that
+        # contains this ui/ package).
+        self._base_dir = base_dir or os.path.join(
+            os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+            "workspace",
+        )
 
     # ------------------------------------------------------------- Phase 1
     def get_config(self) -> dict:
@@ -206,6 +213,24 @@ class Api:
             return {"ok": True}
         except Exception as e:
             return {"ok": False, "errors": [f"run_validation failed: {e}"]}
+
+    def load_run_data(self) -> dict:
+        """Load prompt, result and variables from the workspace run files.
+
+        Reads ``workspace/prompt.txt``, ``workspace/result.txt`` and
+        ``workspace/{var}.txt`` for each ``{{var}}`` in the prompt.
+
+        ``{"ok": True, "prompt": str, "result": str,
+        "variables": [{"name", "value"}, ...]}`` or
+        ``{"ok": False, "error": "..."}``.
+        """
+        try:
+            data = load_run_data(self._base_dir)
+            return {"ok": True, **data}
+        except FileNotFoundError as e:
+            return {"ok": False, "error": str(e)}
+        except Exception as e:
+            return {"ok": False, "error": f"load_run_data failed: {e}"}
 
     # ------------------------------------------- stubs (implemented later)
     def run_prompt(self, template: str, result: str, variables: list) -> dict:

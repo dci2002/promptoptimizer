@@ -15,7 +15,7 @@
 # 2. Interface
 ## Two tabs:
 ### 2.1. "Prompts"
-- 2.1.1. **Prompt settings area** — contains the fields: "**Prompt**" (multiline field, 10 lines high), "**Result**" (with the **button "Run prompt"**), **variables table** (with "Add" and "Remove" buttons) with columns: Variable, Value
+- 2.1.1. **Prompt settings area** — contains the fields: "**Prompt**" (multiline field, 10 lines high, with a **button "Load from files"** to the right of the label), "**Result**" (with the **button "Run prompt"** and a **button "Refresh variables"**), **variables table** (with "Add", "Edit", "Remove" buttons) with columns: Variable, Value
 - 2.1.2. **Execution area** — contains the **button "Start"**, the **"Progress" field** for tracking progress (multiline, 10 lines high), the **"Optimization result" field** — multiline field (10 lines high)
 - 2.1.3. **"Human-in-the-loop" area** — contains the **"Human-in-the-loop" flag** and two multiline fields (10 lines high): **"Source prompt"** (next to the field — **a "Copy" button** — to the clipboard), **"Result prompt"** (available when the flag is enabled, otherwise cleared and disabled)
 ### 2.2. "Settings"
@@ -40,8 +40,16 @@
 - **3.5. Prompt configuration**
   - The user enters the prompt text into the "Prompt" field
   - The user adds or removes variables for the variables table (via the corresponding buttons) — when adding, a window with the fields "Variable name" (single-line) and "Variable value" (multiline, 5 lines high) opens
+  - The user can click the "Edit" button (requires a selected row in the variables table) — opens the same window with the "Variable name" field read-only and the "Variable value" field pre-filled — saving updates the value in the table
+  - The user can click the "Refresh variables" button — the system extracts all "{{Variable name}}" occurrences from the current "Prompt" field text and adds any new variables to the table (existing variables keep their values, their order in the table is preserved; new variables are appended at the end)
+  - The user can click the "Load from files" button (next to the "Prompt" label) — the system reads the workspace files written by the last "Start" (prompt.txt, result.txt, {var}.txt) and fills: the "Prompt" field with the template, the "Result" field with the expected result, and the variables table with variable names extracted from the prompt and their values from the corresponding {var}.txt files (a variable whose file is absent gets an empty value); if prompt.txt is missing — an error message is shown and nothing is changed
   - The user enters the result into the "Result" field
   - The user can click the "Run prompt" button — if the check in item 3.6 passes — the system fills the prompt template with the variables — runs the prompt on LLM as Judge — the "Result" field is filled with the execution result
+- **3.5.1. Context menu (right-click) in text fields**
+  - right-clicking in any text field ("Prompt", "Result", "Source prompt", "Result prompt", "Progress", "Optimization result", dialog inputs) shows a context menu with "Copy", "Cut", "Paste"
+  - "Copy" copies the current selection (or the whole field content if nothing is selected) to the system clipboard
+  - "Cut" removes the selection from the field and copies it to the system clipboard
+  - "Paste" inserts the system clipboard text at the cursor position (for the "Paste" action the clipboard is read on the Python side — the browser clipboard API is unavailable in the Qt WebEngine backend)
 - **3.6. Checking that the settings are filled in for running the prompt** —
   - the system checks that:
     - the LLM as Judge and LLM for prompts settings are selected, and the settings for the corresponding LLM are set for the selected configurations
