@@ -138,24 +138,24 @@ Prompts tab. Run `scripts/dev/smoke_core.py` → correct files in `workspace/`.
 
 ## Phase 4 — LLM layer + "Run prompt" (GUI test: real one-shot LLM call)
 
-- [ ] **T4.1** `core/llm.py`: port `LLM2Executor` from the template verbatim
+- [x] **T4.1** `core/llm.py`: port `LLM2Executor` from the template verbatim
       (reads `final_prompt.txt`, `ChatOpenAI`, `reasoning_effort=None`,
       system message "Respond directly without showing your reasoning");
       API-key validation.
-- [ ] **T4.2** `make_llm1(llm_cfg) -> ChatOpenAI` factory (same
+- [x] **T4.2** `make_llm1(llm_cfg) -> ChatOpenAI` factory (same
       `reasoning_effort=None` rule) — used by the agent in Phase 6.
-- [ ] **T4.3** `runner.resolve_role_configs(config_data) -> (llm1_cfg,
+- [x] **T4.3** `runner.resolve_role_configs(config_data) -> (llm1_cfg,
       llm2_cfg)` — maps role names to LLM dicts; llm1 carries
       `max_attempts`.
-- [ ] **T4.4** `runner.run_prompt_check(...)` — validate → write files →
+- [x] **T4.4** `runner.run_prompt_check(...)` — validate → write files →
       `build_final_prompt` → `LLM2Executor.execute()` →
       `{"ok": True, "result": ...}` / `{"ok": False, "error": ...}`.
-- [ ] **T4.5** `Api.run_prompt(template, result, variables)` — thin wrapper
+- [x] **T4.5** `Api.run_prompt(template, result, variables)` — thin wrapper
       over `run_prompt_check` (GUI thread; acceptable: one LLM call).
-- [ ] **T4.6** `app.js` — "Run prompt" icon button: click → spinner state on
+- [x] **T4.6** `app.js` — "Run prompt" icon button: click → spinner state on
       the button → `api.run_prompt(...)` → ok: fill Result field with the
       LLM output; error: toast, Result field untouched.
-- [ ] **T4.7** Integration test (skippable if the vLLM servers are
+- [x] **T4.7** Integration test (skippable if the vLLM servers are
       unreachable): `run_prompt_check` against the seeded `gemma-target`.
 
 **GUI test (Phase 4):** with both roles set and a valid prompt/variables,

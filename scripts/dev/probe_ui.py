@@ -52,7 +52,7 @@ REAL_CONFIG = os.path.join(PROJECT_ROOT, "config.yaml")
 
 # Global hard timeout: if the probe hasn't finished within this many seconds,
 # kill the process.  Prevents indefinite hangs if evaluate_js misbehaves.
-GLOBAL_TIMEOUT_S = 90
+GLOBAL_TIMEOUT_S = 180
 
 PROBE_JS = """
 (() => {
@@ -196,6 +196,33 @@ JS_PASTE_SIMULATE = """
 
 # Step 2: verify the pasted text is in the prompt field
 JS_PASTE_VERIFY = "document.getElementById('prompt').value"
+
+# ── Phase 4: "Run prompt" GUI test (req 3.5 / 3.6) ────────────────────────
+# Switch to the Prompts tab, fill prompt + result, and click #btn-run-prompt.
+# The real judge LLM call runs on the GUI thread; Python polls for the result.
+JS_RUN_PROMPT_TRIGGER = """
+(() => {
+    const promptsBtn = document.querySelector('.tab-btn[data-tab="prompts"]');
+    if (promptsBtn) promptsBtn.click();
+    document.getElementById('prompt').value = 'Reply with the single word: pong';
+    document.getElementById('result').value = '{sentinel}';
+    const btn = document.getElementById('btn-run-prompt');
+    btn.click();
+    return {loading: btn.classList.contains('loading'), disabled: btn.disabled};
+})()
+"""
+JS_RESULT_VALUE = "document.getElementById('result').value"
+JS_RUN_PROMPT_STATE = """
+(() => {
+    const btn = document.getElementById('btn-run-prompt');
+    const toast = [...document.querySelectorAll('.toast')].map(t => t.textContent);
+    return {loading: btn.classList.contains('loading'), disabled: btn.disabled, toasts: toast};
+})()
+"""
+# Re-click #btn-run-prompt (the judge LLM's api_base has been broken on the
+# Python side) to exercise the req 3.6 error path: error toast + Result
+# field unchanged.
+JS_RERUN_PROMPT = "document.getElementById('btn-run-prompt').click()"
 
 
 def main() -> int:
@@ -414,6 +441,85 @@ def main() -> int:
                 print(f"FAIL(3.6): pasted text not in prompt field: {paste_value!r}", flush=True); ok = False
             else:
                 print("OK(3.6): paste via context menu inserted text into prompt", flush=True)
+
+        # ── 4. RUN PROMPT (Phase 4 GUI test: real one-shot LLM call) ────
+        # req 3.5: valid prompt → Result field filled with the judge LLM's
+        # output, and workspace/final_prompt.txt holds the substituted prompt.
+        _RUN_SENTINEL = "SENTINEL_EXPECTED_RESULT_DO_NOT_USE"
+        run_trigger = window.evaluate_js(
+            JS_RUN_PROMPT_TRIGGER.replace("{sentinel}", _RUN_SENTINEL)
+        )
+        print(f"[probe] 4 RUN PROMPT: trigger={run_trigger}", flush=True)
+        if not (isinstance(run_trigger, dict) and run_trigger.get("loading") and run_trigger.get("disabled")):
+            print("FAIL(4): button did not enter the loading/spinner state", flush=True); ok = False
+
+        prompt_text = "Reply with the single word: pong"
+        result_filled = _RUN_SENTINEL
+        for _ in range(120):  # up to ~60s for the real LLM call
+            time.sleep(0.5)
+            st = window.evaluate_js(JS_RUN_PROMPT_STATE)
+            if st and st.get("loading") is False:
+                break
+            result_filled = window.evaluate_js(JS_RESULT_VALUE) or ""
+        result_filled = window.evaluate_js(JS_RESULT_VALUE) or ""
+        print(f"[probe] 4 RUN PROMPT: result={result_filled!r}", flush=True)
+        if not result_filled or result_filled == _RUN_SENTINEL:
+            print("FAIL(4): Result field unchanged — the LLM output was not applied", flush=True); ok = False
+        else:
+            print("OK(4): Result field filled with LLM output", flush=True)
+
+        # final_prompt.txt must exist in the workspace and contain the prompt.
+        final_path = os.path.join(PROJECT_ROOT, "workspace", "final_prompt.txt")
+        if os.path.exists(final_path):
+            fp_content = open(final_path, "r", encoding="utf-8").read()
+            if prompt_text in fp_content:
+                print("OK(4): final_prompt.txt exists and contains the substituted prompt", flush=True)
+            else:
+                print(f"FAIL(4): final_prompt.txt missing the prompt text: {fp_content!r}", flush=True); ok = False
+        else:
+            print(f"FAIL(4): workspace/final_prompt.txt not found at {final_path}", flush=True); ok = False
+
+        # req 3.6: break the judge LLM's api_base → error toast, Result unchanged.
+        # Pull the judge name from the on-disk temp config (authoritative).
+        with open(cfg_path, "r", encoding="utf-8") as f:
+            disk_cfg = yaml.safe_load(f)
+        judge_name = (disk_cfg.get("roles") or {}).get("judge", "")
+        print(f"[probe] 4 break judge: {judge_name!r}", flush=True)
+        broken_result = result_filled  # capture Result value before the error run
+        try:
+            judge_entry = next(
+                (l for l in (disk_cfg.get("llms") or [])
+                 if isinstance(l, dict) and l.get("name") == judge_name),
+                None,
+            )
+            if judge_entry:
+                config.update_llm(judge_name, {
+                    "name": judge_name,
+                    "api_base": "http://127.0.0.1:1/v1",  # unroutable
+                    "api_key": judge_entry.get("api_key", "test"),
+                    "model": judge_entry.get("model", judge_name),
+                    "temperature": judge_entry.get("temperature", 0.0),
+                })
+                rerun = window.evaluate_js(JS_RERUN_PROMPT)
+                err_state = None
+                for _ in range(120):  # up to ~60s for the failed call
+                    time.sleep(0.5)
+                    err_state = window.evaluate_js(JS_RUN_PROMPT_STATE)
+                    if err_state and err_state.get("loading") is False:
+                        break
+                result_after_error = window.evaluate_js(JS_RESULT_VALUE) or ""
+                print(f"[probe] 4 error path: state={err_state} result={result_after_error!r}", flush=True)
+                if result_after_error != broken_result:
+                    print("FAIL(4.6): Result field changed after an error run", flush=True); ok = False
+                else:
+                    print("OK(4.6): Result field unchanged after error run", flush=True)
+                toasts = (err_state or {}).get("toasts", [])
+                if toasts:
+                    print(f"OK(4.6): error toast shown: {toasts}", flush=True)
+                else:
+                    print("FAIL(4.6): no error toast appeared", flush=True); ok = False
+        except Exception as exc:  # noqa: BLE001
+            print(f"FAIL(4.6): broke judge config but error run raised: {exc}", flush=True); ok = False
 
         # ── verify on-disk persistence ──────────────────────────────────
         # Note: scenario 3.3 removes probe-new, so it must NOT be on disk.

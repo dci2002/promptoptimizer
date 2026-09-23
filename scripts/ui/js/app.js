@@ -576,6 +576,44 @@
         validationTimer = setTimeout(runValidation, 400);
     }
 
+    /* ── Run prompt (Phase 4, T4.6) ── */
+
+    function onRunPrompt() {
+        var a = api();
+        if (!a || !a.run_prompt) {
+            toast("Bridge not ready", "error");
+            return;
+        }
+        var btn = document.getElementById("btn-run-prompt");
+        var variables = state.variables.map(function (v) { return { name: v.name, value: v.value }; });
+        btn.classList.add("loading");
+        btn.disabled = true;
+        setStatus("Running prompt on LLM as Judge…", "info");
+        a.run_prompt(promptField.value, resultField.value, variables).then(function (res) {
+            btn.classList.remove("loading");
+            btn.disabled = false;
+            if (res && res.ok) {
+                resultField.value = res.result;
+                setStatus("Prompt run finished", "ok");
+                toast("Prompt run finished", "ok");
+            } else if (res && res.errors) {
+                validationStrip.textContent = res.errors.join("  ·  ");
+                validationStrip.style.display = "block";
+                setStatus("Validation failed", "error");
+                toast("Validation failed", "error");
+            } else {
+                var msg = (res && res.error) ? res.error : "Run prompt failed";
+                setStatus(msg, "error");
+                toast(msg, "error");
+            }
+        }).catch(function (err) {
+            btn.classList.remove("loading");
+            btn.disabled = false;
+            setStatus("Run prompt failed: " + err, "error");
+            toast("Run prompt failed: " + err, "error");
+        });
+    }
+
     function runValidation() {
         var a = api();
         if (!a || !a.run_validation) {
@@ -612,6 +650,7 @@
     btnVarRemove.addEventListener("click", onVarRemove);
     document.getElementById("btn-var-refresh").addEventListener("click", onVarRefresh);
     document.getElementById("btn-run-load").addEventListener("click", onRunLoad);
+    document.getElementById("btn-run-prompt").addEventListener("click", onRunPrompt);
     document.getElementById("var-dialog-save").addEventListener("click", onVarSave);
     document.getElementById("var-dialog-cancel").addEventListener("click", closeVarDialog);
 

@@ -26,6 +26,7 @@ from typing import Any, Optional
 
 from core.config import ConfigError, ConfigManager
 from core.prompt_io import load_run_data, validate_run_inputs
+from core.runner import ValidationAbort, run_prompt_check
 
 # ── Clipboard access (Qt-based, used by get_clipboard / copy_to_clipboard) ──
 # Imported lazily to avoid breaking headless test environments where Qt is
@@ -232,9 +233,42 @@ class Api:
         except Exception as e:
             return {"ok": False, "error": f"load_run_data failed: {e}"}
 
-    # ------------------------------------------- stubs (implemented later)
+    # ------------------------------------------- Phase 4 — Run prompt
     def run_prompt(self, template: str, result: str, variables: list) -> dict:
-        return _stub()
+        """One-shot LLM call (req 3.5): build the final prompt and send it to
+        the LLM as Judge.
+
+        ``variables`` is a list of ``{"name": str, "value": str}`` dicts.
+        Runs in the GUI thread (a single LLM call is acceptable there).
+
+        Returns ``{"ok": True, "result": str}`` on success, or
+        ``{"ok": False, "error": str}`` / ``{"ok": False, "errors": [...]}``.
+        """
+        try:
+            # Normalise the JS variables array into a dict.
+            var_map: dict[str, str] = {}
+            if isinstance(variables, list):
+                for row in variables:
+                    if isinstance(row, dict):
+                        name = str(row.get("name") or "").strip()
+                        value = str(row.get("value") or "")
+                        if name:
+                            var_map[name] = value
+
+            result = run_prompt_check(
+                self._config.data,
+                str(template or ""),
+                str(result or ""),
+                var_map,
+                self._base_dir,
+            )
+            return {"ok": True, "result": result}
+        except ValidationAbort as e:
+            return {"ok": False, "errors": e.errors}
+        except (ValueError, FileNotFoundError) as e:
+            return {"ok": False, "error": str(e)}
+        except Exception as e:
+            return {"ok": False, "error": f"run_prompt failed: {e}"}
 
     def start_run(self, template: str, result: str, variables: list, hl: bool) -> dict:
         return _stub()

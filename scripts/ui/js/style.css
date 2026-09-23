@@ -215,6 +215,28 @@ html, body {
     cursor: not-allowed;
 }
 
+/* Spinner state (Phase 4, T4.6): hide the icon, show a rotating ring. */
+.icon-btn.loading {
+    pointer-events: none;
+    opacity: 0.7;
+}
+.icon-btn.loading > svg {
+    display: none;
+}
+.icon-btn.loading::before {
+    content: "";
+    position: absolute;
+    width: 16px;
+    height: 16px;
+    border: 2px solid var(--border);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: icon-spin 0.7s linear infinite;
+}
+@keyframes icon-spin {
+    to { transform: rotate(360deg); }
+}
+
 /* CSS tooltip (reliable even where the title attribute is flaky) */
 .icon-btn::after {
     content: attr(title);
