@@ -69,26 +69,26 @@ restart → same behavior.
 
 ## Phase 2 — Settings tab: LLM table + CRUD (GUI test: manage LLMs)
 
-- [ ] **T2.1** `ConfigManager` LLM CRUD: `list_llms()`, `add_llm(cfg)`,
+- [x] **T2.1** `ConfigManager` LLM CRUD: `list_llms()`, `add_llm(cfg)`,
       `update_llm(name, cfg)`, `remove_llm(name)` — duplicate-name
       rejection; removing an LLM clears any role referencing it.
-- [ ] **T2.2** Role accessors: `get_roles()`, `set_role(role, name)`,
+- [x] **T2.2** Role accessors: `get_roles()`, `set_role(role, name)`,
       `get_hl()`, `set_hl(flag)`.
-- [ ] **T2.3** `Api`: implement `list_llms`, `save_llm`, `remove_llm`,
+- [x] **T2.3** `Api`: implement `list_llms`, `save_llm`, `remove_llm`,
       `get_roles`, `set_role` on top of `ConfigManager`.
-- [ ] **T2.4** `dialog.html` + `dialog.js` — in-page modal for LLM add/edit:
+- [x] **T2.4** In-page modal for LLM add/edit (in `index.html`):
       fields name, api_base, api_key, model, temperature; client-side
       required-field validation; Save → `api.save_llm(cfg)`, Cancel → close;
       error from the bridge shown in the modal.
-- [ ] **T2.5** `app.js` — Settings tab render: table populated from
+- [x] **T2.5** `app.js` — Settings tab render: table populated from
       `api.list_llms()`; interactions: Add → open dialog; double-click row
       **or** Edit button → dialog prefilled; Remove → `confirm()` →
       `api.remove_llm(name)`; after every mutation re-render table.
-- [ ] **T2.6** Role dropdowns + HL checkbox: populated from the LLM list;
+- [x] **T2.6** Role dropdowns + HL checkbox: populated from the LLM list;
       change → `api.set_role(...)` / `api.set_hl(...)`; if a selected LLM is
       removed → dropdown cleared.
-- [ ] **T2.7** Unit tests `test_config.py` (part 2): duplicate rejection,
-      remove cascades to roles, atomic write.
+- [x] **T2.7** Unit tests `test_config.py` (part 2): duplicate rejection,
+      remove cascades to roles, atomic write. (48 tests total)
 
 **GUI test (Phase 2):** scenario 3.1 — Add button → fill dialog → Save →
 row appears and `config.yaml` on disk contains the new LLM. Scenario 3.2 —

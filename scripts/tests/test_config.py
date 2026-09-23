@@ -1,9 +1,14 @@
-"""scripts/tests/test_config.py — Part 1 (Phase 1, T1.8).
+"""scripts/tests/test_config.py — Part 1 (Phase 1, T1.8) + Part 2 (Phase 2, T2.7).
 
 Covers:
 - load/save round-trip (data fidelity, UTF-8, atomic replace);
 - invalid schema rejection (each failure mode);
-- ``validate_llm_entry`` (T1.2) per-field rules.
+- ``validate_llm_entry`` (T1.2) per-field rules;
+- LLM CRUD (T2.1): add/update/remove, duplicate rejection, rename cascade,
+  remove cascade to roles, last-LLM protection;
+- role/HL accessors (T2.2): ``set_role``, ``get_role``, ``set_hl``,
+  ``get_hl`` with persistence on every mutation;
+- ``normalize_llm_entry`` (T2.1 support).
 
 Run from the project root::
 
@@ -25,7 +30,12 @@ _SCRIPTS_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _SCRIPTS_DIR not in sys.path:
     sys.path.insert(0, _SCRIPTS_DIR)
 
-from core.config import ConfigError, ConfigManager, validate_llm_entry  # noqa: E402
+from core.config import (  # noqa: E402
+    ConfigError,
+    ConfigManager,
+    normalize_llm_entry,
+    validate_llm_entry,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -58,6 +68,12 @@ def config_file(tmp_path):
     with open(path, "w", encoding="utf-8") as f:
         yaml.safe_dump(_valid_config(), f, allow_unicode=True, sort_keys=False)
     return str(path)
+
+
+def _read_config(path: str) -> dict:
+    """Read a config file directly from disk (independence check)."""
+    with open(path, "r", encoding="utf-8") as f:
+        return yaml.safe_load(f)
 
 
 # ---------------------------------------------------------------------------
@@ -271,6 +287,222 @@ class TestValidateLlmEntry:
         cfg = _valid_llm()
         cfg["temperature"] = 1
         assert validate_llm_entry(cfg) == []
+
+
+# ---------------------------------------------------------------------------
+# normalize_llm_entry (Phase 2 support)
+# ---------------------------------------------------------------------------
+
+class TestNormalizeLlmEntry:
+    def test_strips_and_coerces(self):
+        entry = normalize_llm_entry({
+            "name": "  x  ",
+            "api_base": " http://h:1/v1 ",
+            "api_key": " k ",
+            "model": " m ",
+            "temperature": 1,  # int -> float
+        })
+        assert entry == {
+            "name": "x",
+            "api_base": "http://h:1/v1",
+            "api_key": "k",
+            "model": "m",
+            "temperature": 1.0,
+        }
+
+    def test_drops_extra_keys(self):
+        entry = normalize_llm_entry({**_valid_llm(), "_old_name": "zz", "extra": 1})
+        assert set(entry.keys()) == {"name", "api_base", "api_key", "model", "temperature"}
+
+    def test_invalid_raises(self):
+        with pytest.raises(ConfigError):
+            normalize_llm_entry({**_valid_llm(), "temperature": "hot"})
+
+
+# ---------------------------------------------------------------------------
+# LLM CRUD (Phase 2, T2.1)
+# ---------------------------------------------------------------------------
+
+class TestLlmCrud:
+    def test_list_llms_returns_copies(self, config_file):
+        mgr = ConfigManager(path=config_file)
+        llms = mgr.list_llms()
+        assert [e["name"] for e in llms] == ["a", "b"]
+        # mutating the returned copy must not affect the manager
+        llms[0]["name"] = "mutated"
+        assert mgr.list_llms()[0]["name"] == "a"
+
+    def test_add_llm_persists(self, config_file):
+        mgr = ConfigManager(path=config_file)
+        entry = mgr.add_llm(_valid_llm("c"))
+        assert entry["name"] == "c"
+        assert [e["name"] for e in mgr.list_llms()] == ["a", "b", "c"]
+        # persisted to disk
+        on_disk = _read_config(config_file)
+        assert [e["name"] for e in on_disk["llms"]] == ["a", "b", "c"]
+        assert on_disk["llms"][2]["temperature"] == 0.5
+
+    def test_add_llm_duplicate_rejected(self, config_file):
+        mgr = ConfigManager(path=config_file)
+        with pytest.raises(ConfigError, match="already exists"):
+            mgr.add_llm(_valid_llm("a"))
+        # and the file is untouched
+        on_disk = _read_config(config_file)
+        assert [e["name"] for e in on_disk["llms"]] == ["a", "b"]
+
+    def test_add_llm_invalid_rejected(self, config_file):
+        mgr = ConfigManager(path=config_file)
+        with pytest.raises(ConfigError, match="Invalid LLM entry"):
+            mgr.add_llm({**_valid_llm("c"), "temperature": "hot"})
+        assert [e["name"] for e in mgr.list_llms()] == ["a", "b"]
+
+    def test_update_llm_in_place(self, config_file):
+        mgr = ConfigManager(path=config_file)
+        entry = mgr.update_llm("a", {**_valid_llm("a"), "temperature": 0.9})
+        assert entry["temperature"] == 0.9
+        on_disk = _read_config(config_file)
+        assert on_disk["llms"][0]["temperature"] == 0.9
+        assert [e["name"] for e in on_disk["llms"]] == ["a", "b"]
+
+    def test_update_llm_unknown_name(self, config_file):
+        mgr = ConfigManager(path=config_file)
+        with pytest.raises(ConfigError, match="LLM not found"):
+            mgr.update_llm("ghost", _valid_llm("ghost"))
+
+    def test_update_llm_rename_cascades_roles(self, config_file):
+        """Renaming 'a' (judge) to 'renamed' must re-point roles.judge."""
+        mgr = ConfigManager(path=config_file)
+        entry = mgr.update_llm("a", {**_valid_llm("renamed"), "temperature": 0.1})
+        assert entry["name"] == "renamed"
+        assert mgr.get_role("judge") == "renamed"
+        assert mgr.get_role("prompts") == "b"
+        on_disk = _read_config(config_file)
+        assert on_disk["roles"]["judge"] == "renamed"
+        assert on_disk["roles"]["prompts"] == "b"
+        assert [e["name"] for e in on_disk["llms"]] == ["renamed", "b"]
+
+    def test_update_llm_rename_collision_rejected(self, config_file):
+        mgr = ConfigManager(path=config_file)
+        with pytest.raises(ConfigError, match="already exists"):
+            mgr.update_llm("a", _valid_llm("b"))
+        on_disk = _read_config(config_file)
+        assert [e["name"] for e in on_disk["llms"]] == ["a", "b"]
+
+    def test_remove_llm_clears_roles(self, config_file):
+        """Removing 'a' (judge) must clear roles.judge (set to empty string)."""
+        mgr = ConfigManager(path=config_file)
+        cleared = mgr.remove_llm("a")
+        assert cleared == ["judge"]
+        assert mgr.get_role("judge") == ""
+        assert mgr.get_role("prompts") == "b"
+        on_disk = _read_config(config_file)
+        assert on_disk["roles"]["judge"] == ""
+        assert on_disk["roles"]["prompts"] == "b"
+        assert [e["name"] for e in on_disk["llms"]] == ["b"]
+
+    def test_remove_llm_both_roles(self, tmp_path):
+        """An LLM referenced by BOTH roles: both get cleared."""
+        cfg = _valid_config()
+        cfg["roles"] = {"judge": "a", "prompts": "a"}
+        path = str(tmp_path / "config.yaml")
+        with open(path, "w", encoding="utf-8") as f:
+            yaml.safe_dump(cfg, f, allow_unicode=True, sort_keys=False)
+        mgr = ConfigManager(path=path)
+        cleared = mgr.remove_llm("a")
+        assert sorted(cleared) == ["judge", "prompts"]
+        on_disk = _read_config(path)
+        assert on_disk["roles"]["judge"] == ""
+        assert on_disk["roles"]["prompts"] == ""
+
+    def test_remove_llm_unknown_name(self, config_file):
+        mgr = ConfigManager(path=config_file)
+        with pytest.raises(ConfigError, match="LLM not found"):
+            mgr.remove_llm("ghost")
+
+    def test_remove_last_llm_rejected(self, tmp_path):
+        """The config schema requires >= 1 LLM entry."""
+        cfg = _valid_config()
+        cfg["llms"] = [_valid_llm("only")]
+        cfg["roles"] = {"judge": "only", "prompts": "only"}
+        path = str(tmp_path / "config.yaml")
+        with open(path, "w", encoding="utf-8") as f:
+            yaml.safe_dump(cfg, f, allow_unicode=True, sort_keys=False)
+        mgr = ConfigManager(path=path)
+        with pytest.raises(ConfigError, match="last remaining LLM"):
+            mgr.remove_llm("only")
+
+    def test_crud_is_atomic(self, config_file):
+        """Mutations leave no temp files and keep a valid file at all times."""
+        mgr = ConfigManager(path=config_file)
+        mgr.add_llm(_valid_llm("c"))
+        mgr.update_llm("c", {**_valid_llm("c"), "temperature": 0.2})
+        mgr.remove_llm("c")
+        leftovers = [
+            n for n in os.listdir(os.path.dirname(config_file))
+            if n.startswith(".config_") and n.endswith(".yaml.tmp")
+        ]
+        assert leftovers == []
+        # file is still valid YAML with the original two LLMs
+        on_disk = _read_config(config_file)
+        assert [e["name"] for e in on_disk["llms"]] == ["a", "b"]
+
+
+# ---------------------------------------------------------------------------
+# role / HL accessors (Phase 2, T2.2)
+# ---------------------------------------------------------------------------
+
+class TestRoleHlAccessors:
+    def test_set_role_persists(self, config_file):
+        mgr = ConfigManager(path=config_file)
+        roles = mgr.set_role("judge", "b")
+        assert roles == {"judge": "b", "prompts": "b"}
+        on_disk = _read_config(config_file)
+        assert on_disk["roles"]["judge"] == "b"
+
+    def test_set_role_empty_unsets(self, config_file):
+        mgr = ConfigManager(path=config_file)
+        roles = mgr.set_role("judge", "")
+        assert roles["judge"] == ""
+        on_disk = _read_config(config_file)
+        assert on_disk["roles"]["judge"] == ""
+
+    def test_set_role_unknown_llm_rejected(self, config_file):
+        mgr = ConfigManager(path=config_file)
+        with pytest.raises(ConfigError, match="unknown LLM"):
+            mgr.set_role("judge", "ghost")
+        on_disk = _read_config(config_file)
+        assert on_disk["roles"]["judge"] == "a"
+
+    def test_set_role_unknown_role_rejected(self, config_file):
+        mgr = ConfigManager(path=config_file)
+        with pytest.raises(ConfigError, match="Unknown role"):
+            mgr.set_role("nonsense", "a")
+
+    def test_set_hl_persists(self, config_file):
+        mgr = ConfigManager(path=config_file)
+        assert mgr.get_hl() is False
+        assert mgr.set_hl(True) is True
+        assert mgr.get_hl() is True
+        on_disk = _read_config(config_file)
+        assert on_disk["hl"] is True
+        # back to false
+        assert mgr.set_hl(False) is False
+        assert _read_config(config_file)["hl"] is False
+
+    def test_set_hl_requires_bool(self, config_file):
+        mgr = ConfigManager(path=config_file)
+        with pytest.raises(ConfigError, match="boolean"):
+            mgr.set_hl("yes")  # type: ignore[arg-type]
+
+    def test_accessors_after_reload(self, config_file):
+        """A fresh ConfigManager sees the persisted role/HL state."""
+        mgr = ConfigManager(path=config_file)
+        mgr.set_role("judge", "b")
+        mgr.set_hl(True)
+        mgr2 = ConfigManager(path=config_file)
+        assert mgr2.get_role("judge") == "b"
+        assert mgr2.get_role("prompts") == "b"
+        assert mgr2.get_hl() is True
 
 
 if __name__ == "__main__":

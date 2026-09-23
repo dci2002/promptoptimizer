@@ -169,6 +169,9 @@ html, body {
 
 .data-table tbody tr.selected { background: #dbeafe; }
 
+/* Clickable table rows (Settings LLM table) */
+.data-table tr.row-clickable { cursor: pointer; user-select: none; }
+
 /* ───────────────────────── Icon buttons + tooltips ───────────────────────── */
 
 .icon-btn {
@@ -219,7 +222,7 @@ html, body {
 
 .icon-btn:hover::after { opacity: 1; }
 
-/* ───────────────────────── Modal (base, used from Phase 2+) ───────────────────────── */
+/* ───────────────────────── Modal (Phase 2) ───────────────────────── */
 
 .modal-overlay {
     display: none;
@@ -246,6 +249,7 @@ html, body {
 
 .modal .field-row { margin-bottom: 8px; }
 
+.modal .dialog-input,
 .modal input[type="text"],
 .modal .multiline {
     width: 100%;
@@ -253,6 +257,12 @@ html, body {
     border: 1px solid var(--border);
     border-radius: 6px;
     font-size: 13px;
+    background: #fbfcfd;
+}
+
+.modal .dialog-input:focus {
+    outline: none;
+    border-color: var(--accent);
 }
 
 .modal input.multiline-5 { min-height: 100px; }
@@ -262,6 +272,31 @@ html, body {
     justify-content: flex-end;
     gap: 8px;
     margin-top: 14px;
+}
+
+.modal .dialog-actions button {
+    padding: 7px 18px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--icon-bg);
+    color: var(--text);
+    cursor: pointer;
+    font-size: 13px;
+}
+
+.modal .dialog-actions button:hover { background: var(--icon-hover); }
+
+.modal .dialog-actions button.primary {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
+}
+
+.modal .dialog-actions button.primary:hover { background: #1d4ed8; }
+
+.modal .dialog-actions button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
 }
 
 .modal .dialog-error {
@@ -298,7 +333,9 @@ html, body {
     z-index: 200;
     opacity: 0;
     transition: opacity 0.2s;
+    pointer-events: none;
 }
 
 .toast.show { opacity: 1; }
 .toast.error { background: var(--danger); }
+.toast.ok { background: #15803d; }

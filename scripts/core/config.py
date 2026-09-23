@@ -9,6 +9,15 @@ Single owner of the ``config.yaml`` file. Responsibilities (architecture §3.1):
 - roles must reference existing LLM names;
 - ``hl`` is a bool, ``max_attempts`` is a positive int.
 
+Phase 2 adds LLM CRUD (``list_llms`` / ``add_llm`` / ``update_llm`` /
+``remove_llm``) and role/HL setters on top of load/save:
+
+- duplicate LLM names are rejected;
+- ``update_llm`` may rename an entry — roles referencing the old name are
+  re-pointed to the new one;
+- ``remove_llm`` clears any role that references the removed LLM;
+- every mutation is persisted atomically via :meth:`ConfigManager.save`.
+
 This module has **no** pywebview imports — it runs headless and is unit-tested
 independently of the UI.
 """
@@ -22,7 +31,7 @@ from typing import Any, Optional
 
 import yaml
 
-__all__ = ["ConfigError", "validate_llm_entry", "ConfigManager"]
+__all__ = ["ConfigError", "validate_llm_entry", "normalize_llm_entry", "ConfigManager"]
 
 
 class ConfigError(Exception):
@@ -77,6 +86,24 @@ def validate_llm_entry(cfg: Any) -> list[str]:
         )
 
     return errors
+
+
+def normalize_llm_entry(cfg: dict) -> dict:
+    """Return a clean copy of an LLM entry (Phase 2).
+
+    - all 5 fields are stripped strings (``temperature`` coerced to float);
+    - extra keys from unknown producers (e.g. the JS bridge) are dropped.
+    """
+    errors = validate_llm_entry(cfg)
+    if errors:
+        raise ConfigError("Invalid LLM entry:\n  - " + "\n  - ".join(errors))
+    return {
+        "name": str(cfg["name"]).strip(),
+        "api_base": str(cfg["api_base"]).strip(),
+        "api_key": str(cfg["api_key"]).strip(),
+        "model": str(cfg["model"]).strip(),
+        "temperature": float(cfg["temperature"]),
+    }
 
 
 def _validate_config_data(data: Any) -> list[str]:
@@ -266,3 +293,131 @@ class ConfigManager:
 
     def get_max_attempts(self) -> int:
         return int(self._data.get("max_attempts", 30))
+
+    # -------------------------------------------------------------- LLM CRUD
+    def _find_llm(self, name: str) -> int:
+        """Index of the LLM entry with ``name``; -1 if absent."""
+        for i, entry in enumerate(self.get_llms()):
+            if isinstance(entry, dict) and entry.get("name") == name:
+                return i
+        return -1
+
+    def list_llms(self) -> list[dict]:
+        """Return a deep copy of all LLM entries (safe to hand to the bridge)."""
+        return copy.deepcopy(self.get_llms())
+
+    def add_llm(self, cfg: dict) -> dict:
+        """Add a new LLM entry; reject duplicate names.
+
+        The entry is validated and normalised first. The mutation is
+        persisted atomically. Returns the stored (normalised) entry.
+
+        Raises
+        ------
+        ConfigError
+            If the entry is invalid or the name already exists.
+        """
+        entry = normalize_llm_entry(cfg)
+        if self._find_llm(entry["name"]) != -1:
+            raise ConfigError(f"LLM name already exists: '{entry['name']}'")
+        data = copy.deepcopy(self._data)
+        data.setdefault("llms", []).append(entry)
+        self.save(data)
+        return copy.deepcopy(entry)
+
+    def update_llm(self, old_name: str, cfg: dict) -> dict:
+        """Update the LLM named ``old_name`` with the (normalised) ``cfg``.
+
+        The entry may be renamed (``cfg['name'] != old_name``): in that case
+        every role referencing the old name is re-pointed to the new name.
+        The mutation is persisted atomically. Returns the stored entry.
+
+        Raises
+        ------
+        ConfigError
+            If ``old_name`` is unknown, the entry is invalid, or the new name
+            collides with another existing LLM.
+        """
+        idx = self._find_llm(old_name)
+        if idx == -1:
+            raise ConfigError(f"LLM not found: '{old_name}'")
+        entry = normalize_llm_entry(cfg)
+        new_name = entry["name"]
+        if new_name != old_name and self._find_llm(new_name) != -1:
+            raise ConfigError(f"LLM name already exists: '{new_name}'")
+
+        data = copy.deepcopy(self._data)
+        data["llms"][idx] = entry
+        if new_name != old_name:
+            roles = data.get("roles")
+            if isinstance(roles, dict):
+                for role in ROLE_KEYS:
+                    if roles.get(role) == old_name:
+                        roles[role] = new_name
+        self.save(data)
+        return copy.deepcopy(entry)
+
+    def remove_llm(self, name: str) -> list[str]:
+        """Remove the LLM named ``name``; cascade-clear roles referencing it.
+
+        The mutation is persisted atomically. Returns the list of role keys
+        that were cleared (e.g. ``["judge"]``).
+
+        Raises
+        ------
+        ConfigError
+            If ``name`` is unknown, or it is the last remaining LLM
+            (the config schema requires at least one entry).
+        """
+        idx = self._find_llm(name)
+        if idx == -1:
+            raise ConfigError(f"LLM not found: '{name}'")
+        llms = self.get_llms()
+        if len(llms) <= 1:
+            raise ConfigError(
+                "Cannot remove the last remaining LLM — at least one entry is required"
+            )
+
+        data = copy.deepcopy(self._data)
+        data["llms"].pop(idx)
+        cleared: list[str] = []
+        roles = data.get("roles")
+        if isinstance(roles, dict):
+            for role in ROLE_KEYS:
+                if roles.get(role) == name:
+                    roles[role] = ""
+                    cleared.append(role)
+        self.save(data)
+        return cleared
+
+    # ---------------------------------------------------------- roles / HL
+    def set_role(self, role: str, name: str) -> dict:
+        """Assign LLM ``name`` to ``role`` and persist.
+
+        An empty ``name`` unsets the role. The name must reference an
+        existing LLM. Returns the updated ``roles`` mapping.
+
+        Raises
+        ------
+        ConfigError
+            If ``role`` is not in :data:`ROLE_KEYS` or ``name`` is unknown.
+        """
+        if role not in ROLE_KEYS:
+            raise ConfigError(f"Unknown role: '{role}' (expected one of {ROLE_KEYS})")
+        name = (name or "").strip()
+        if name and self._find_llm(name) == -1:
+            raise ConfigError(f"Cannot assign role '{role}': unknown LLM '{name}'")
+
+        data = copy.deepcopy(self._data)
+        data.setdefault("roles", {})[role] = name
+        self.save(data)
+        return copy.deepcopy(data["roles"])
+
+    def set_hl(self, flag: bool) -> bool:
+        """Set the Human-in-the-loop flag and persist. Returns the new value."""
+        if not isinstance(flag, bool):
+            raise ConfigError("hl flag must be a boolean")
+        data = copy.deepcopy(self._data)
+        data["hl"] = flag
+        self.save(data)
+        return flag

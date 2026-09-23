@@ -123,17 +123,18 @@
                         </svg>
                     </button>
                     <button id="btn-llm-edit" class="icon-btn" type="button"
-                            title="Edit LLM" aria-label="Edit LLM">
+                            title="Edit LLM (selected row)" aria-label="Edit LLM">
                         <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
                             <path d="M11.5 2.5l2 2L5 13H3v-2l8.5-8.5zM13 1l.8.8-1.5 1.5-.8-.8L13 1z" fill="currentColor"/>
                         </svg>
                     </button>
                     <button id="btn-llm-remove" class="icon-btn" type="button"
-                            title="Remove LLM" aria-label="Remove LLM">
+                            title="Remove LLM (selected row)" aria-label="Remove LLM">
                         <svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true">
                             <path d="M4.3 3 8 6.7 11.7 3 13 4.3 9.3 8l3.7 3.7L11.7 13 8 9.3 4.3 13 3 11.7 6.7 8 3 4.3 4.3 3z" fill="currentColor"/>
                         </svg>
                     </button>
+                    <span id="llm-selection-hint" class="muted"></span>
                 </div>
                 <table id="llms-table" class="data-table">
                     <thead>
@@ -143,7 +144,7 @@
                         </tr>
                     </thead>
                     <tbody id="llms-body">
-                        <!-- rows added by app.js -->
+                        <!-- rows added by app.js; click = select, double-click = edit -->
                     </tbody>
                 </table>
             </fieldset>
@@ -155,8 +156,46 @@
 
                 <label class="field-label" for="role-prompts">LLM for prompts:</label>
                 <select id="role-prompts" class="dropdown"><option value="">— not selected —</option></select>
+
+                <label class="check-label">
+                    <input type="checkbox" id="hl-flag-settings"> Human-in-the-loop (analyze step delegated to the user)
+                </label>
             </fieldset>
         </section>
+
+        <!-- ═══════════════ LLM dialog (in-page modal, Phase 2) ═══════════════ -->
+        <div id="llm-dialog-overlay" class="modal-overlay">
+            <div class="modal" role="dialog" aria-modal="true" aria-labelledby="llm-dialog-title">
+                <h3 id="llm-dialog-title">Add LLM</h3>
+
+                <label class="field-label" for="llm-name">name:</label>
+                <input type="text" id="llm-name" class="dialog-input"
+                       placeholder="unique name, e.g. qwen-judge">
+
+                <label class="field-label" for="llm-api-base">api_base:</label>
+                <input type="text" id="llm-api-base" class="dialog-input"
+                       placeholder="http://host:port/v1">
+
+                <label class="field-label" for="llm-api-key">api_key:</label>
+                <input type="text" id="llm-api-key" class="dialog-input"
+                       placeholder="API key">
+
+                <label class="field-label" for="llm-model">model:</label>
+                <input type="text" id="llm-model" class="dialog-input"
+                       placeholder="org/model-name">
+
+                <label class="field-label" for="llm-temperature">temperature:</label>
+                <input type="text" id="llm-temperature" class="dialog-input"
+                       placeholder="0.0 – 2.0 (number)" inputmode="decimal">
+
+                <div id="llm-dialog-error" class="dialog-error"></div>
+
+                <div class="dialog-actions">
+                    <button id="llm-dialog-cancel" type="button">Cancel</button>
+                    <button id="llm-dialog-save" type="button" class="primary">Save</button>
+                </div>
+            </div>
+        </div>
 
         <!-- ═══════════════ Status line (bridge probe) ═══════════════ -->
         <div id="status-line" class="muted">Connecting…</div>

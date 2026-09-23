@@ -1,4 +1,7 @@
-/* Prompt Optimizer — app.js (Phase 1: tab switching + bridge probe) */
+/* Prompt Optimizer — app.js
+ * Phase 1: tab switching + bridge probe.
+ * Phase 2: Settings tab — LLM table CRUD, role dropdowns, HL checkbox.
+ */
 
 (function () {
     "use strict";
@@ -8,6 +11,26 @@
     function setStatus(text, cls) {
         statusLine.textContent = text;
         statusLine.className = cls || "";
+    }
+
+    /* ───────────────────────── Bridge helper ───────────────────────── */
+
+    function api() {
+        return (window.pywebview && window.pywebview.api) ? window.pywebview.api : null;
+    }
+
+    /* ───────────────────────── Toasts ───────────────────────── */
+
+    function toast(message, kind, ms) {
+        var el = document.createElement("div");
+        el.className = "toast " + (kind || "");
+        el.textContent = message;
+        document.body.appendChild(el);
+        requestAnimationFrame(function () { el.classList.add("show"); });
+        setTimeout(function () {
+            el.classList.remove("show");
+            setTimeout(function () { el.remove(); }, 250);
+        }, ms || 3200);
     }
 
     /* ───────────────────────── Tab switching ───────────────────────── */
@@ -30,10 +53,354 @@
         });
     });
 
-    /* ───────────────────────── Bridge probe (Phase 1) ─────────────────────────
-     * On load call window.pywebview.api.get_config() and log the result
-     * to the status line to prove the JS ↔ Python bridge works.
+    /* ═══════════════════════════ Phase 2 — Settings tab ═══════════════════════════ */
+
+    var llmsBody = document.getElementById("llms-body");
+    var roleJudgeSel = document.getElementById("role-judge");
+    var rolePromptsSel = document.getElementById("role-prompts");
+    var hlFlagSettings = document.getElementById("hl-flag-settings");
+    var hlFlag = document.getElementById("hl-flag");
+    var selectionHint = document.getElementById("llm-selection-hint");
+
+    var state = {
+        llms: [],          // [{name, api_base, api_key, model, temperature}]
+        roles: { judge: "", prompts: "" },
+        hl: false,
+        max_attempts: 30,
+        selectedLlm: null  // name of the selected table row
+    };
+
+    /* ── LLM table rendering ── */
+
+    function renderLlmTable() {
+        llmsBody.innerHTML = "";
+        state.llms.forEach(function (llm) {
+            var tr = document.createElement("tr");
+            tr.className = "row-clickable" + (state.selectedLlm === llm.name ? " selected" : "");
+            tr.dataset.name = llm.name;
+
+            ["name", "api_base", "api_key", "model", "temperature"].forEach(function (field) {
+                var td = document.createElement("td");
+                td.textContent = llm[field];
+                tr.appendChild(td);
+            });
+
+            tr.addEventListener("click", function () {
+                state.selectedLlm = llm.name;
+                markLlmRowSelected();
+            });
+            tr.addEventListener("dblclick", function () {
+                openLlmDialog(llm);
+            });
+
+            llmsBody.appendChild(tr);
+        });
+        updateSettingsButtons();
+    }
+
+    function markLlmRowSelected() {
+        var rows = llmsBody.querySelectorAll("tr");
+        rows.forEach(function (row) {
+            row.classList.toggle("selected", row.dataset.name === state.selectedLlm);
+        });
+        selectionHint.textContent = state.selectedLlm
+            ? "selected: " + state.selectedLlm
+            : "(no row selected)";
+        updateSettingsButtons();
+    }
+
+    function updateSettingsButtons() {
+        var hasSelection = !!state.selectedLlm;
+        document.getElementById("btn-llm-edit").disabled = !hasSelection;
+        document.getElementById("btn-llm-remove").disabled = !hasSelection;
+    }
+
+    function getSelectedLlm() {
+        if (!state.selectedLlm) return null;
+        for (var i = 0; i < state.llms.length; i++) {
+            if (state.llms[i].name === state.selectedLlm) return state.llms[i];
+        }
+        return null;
+    }
+
+    /* ── Role dropdowns ── */
+
+    function renderRoleDropdowns() {
+        // Map of select element → role key
+        var mappings = [
+            { sel: roleJudgeSel, role: "judge" },
+            { sel: rolePromptsSel, role: "prompts" }
+        ];
+        mappings.forEach(function (m) {
+            var sel = m.sel;
+            var roleKey = m.role;
+            // Rebuild options
+            sel.innerHTML = '<option value="">— not selected —</option>';
+            state.llms.forEach(function (llm) {
+                var opt = document.createElement("option");
+                opt.value = llm.name;
+                opt.textContent = llm.name;
+                sel.appendChild(opt);
+            });
+            // Restore selection from state.roles if the LLM still exists
+            var desired = state.roles[roleKey] || "";
+            var exists = state.llms.some(function (l) { return l.name === desired; });
+            sel.value = exists ? desired : "";
+        });
+    }
+
+    function onRoleChange(role, select) {
+        var a = api();
+        if (!a) return;
+        a.set_role(role, select.value).then(function (res) {
+            if (!res || res.ok === false) {
+                toast("Role error: " + (res ? res.error : "no response"), "error");
+                // reload current state from config to resync the dropdown
+                refreshSettings();
+                return;
+            }
+            state.roles = res.roles || state.roles;
+            renderRoleDropdowns();
+        });
+    }
+
+    /* ── HL checkbox (Settings tab) ── */
+
+    function onHlChange() {
+        var a = api();
+        if (!a) return;
+        var value = hlFlagSettings.checked;
+        // Keep the Prompts-tab checkbox in sync immediately (single source of
+        // truth is the Settings checkbox; this mirrors the pending value).
+        if (hlFlag) hlFlag.checked = value;
+        a.set_hl(value).then(function (res) {
+            if (!res || res.ok === false) {
+                toast("HL error: " + (res ? res.error : "no response"), "error");
+                hlFlagSettings.checked = state.hl;
+                if (hlFlag) hlFlag.checked = state.hl;
+                return;
+            }
+            state.hl = res.hl;
+            hlFlagSettings.checked = state.hl;
+            if (hlFlag) hlFlag.checked = state.hl;
+        });
+    }
+
+    /* ── Settings refresh (after any mutation) ── */
+
+    function refreshSettings() {
+        var a = api();
+        if (!a) return;
+        a.get_config().then(function (cfg) {
+            if (!cfg || cfg.ok === false) {
+                toast("Failed to reload config: " + (cfg ? cfg.error : "no response"), "error");
+                return;
+            }
+            state.llms = cfg.llms || [];
+            state.roles = cfg.roles || {};
+            state.hl = !!cfg.hl;
+            state.max_attempts = cfg.max_attempts;
+            // Drop the selection if the LLM no longer exists.
+            if (state.selectedLlm && !state.llms.some(function (l) { return l.name === state.selectedLlm; })) {
+                state.selectedLlm = null;
+            }
+            renderLlmTable();
+            markLlmRowSelected();
+            renderRoleDropdowns();
+            hlFlagSettings.checked = state.hl;
+            if (hlFlag) hlFlag.checked = state.hl;
+        });
+    }
+
+    /* ═══════════════════ LLM dialog (add / edit) ═══════════════════ */
+
+    var overlay = document.getElementById("llm-dialog-overlay");
+    var dlgTitle = document.getElementById("llm-dialog-title");
+    var dlgName = document.getElementById("llm-name");
+    var dlgApiBase = document.getElementById("llm-api-base");
+    var dlgApiKey = document.getElementById("llm-api-key");
+    var dlgModel = document.getElementById("llm-model");
+    var dlgTemperature = document.getElementById("llm-temperature");
+    var dlgError = document.getElementById("llm-dialog-error");
+    var dlgSaveBtn = document.getElementById("llm-dialog-save");
+
+    var dialogState = { mode: "add", oldName: "" };
+
+    function openLlmDialog(llm) {
+        if (llm) {
+            dialogState = { mode: "edit", oldName: llm.name };
+            dlgTitle.textContent = "Edit LLM — " + llm.name;
+            dlgName.value = llm.name;
+            dlgApiBase.value = llm.api_base;
+            dlgApiKey.value = llm.api_key;
+            dlgModel.value = llm.model;
+            dlgTemperature.value = String(llm.temperature);
+        } else {
+            dialogState = { mode: "add", oldName: "" };
+            dlgTitle.textContent = "Add LLM";
+            dlgName.value = "";
+            dlgApiBase.value = "";
+            dlgApiKey.value = "";
+            dlgModel.value = "";
+            dlgTemperature.value = "";
+        }
+        dlgError.textContent = "";
+        overlay.classList.add("open");
+        dlgName.focus();
+    }
+
+    function closeLlmDialog() {
+        overlay.classList.remove("open");
+    }
+
+    function showDlgError(msg) {
+        dlgError.textContent = msg || "";
+    }
+
+    /* Client-side required-field validation (T2.4). */
+    function validateDialogFields() {
+        var errors = [];
+        var name = dlgName.value.trim();
+        var apiBase = dlgApiBase.value.trim();
+        var apiKey = dlgApiKey.value.trim();
+        var model = dlgModel.value.trim();
+        var tempRaw = dlgTemperature.value.trim();
+
+        if (!name) errors.push("name is required");
+        if (!apiBase) errors.push("api_base is required");
+        if (!apiKey) errors.push("api_key is required");
+        if (!model) errors.push("model is required");
+        if (tempRaw === "") {
+            errors.push("temperature is required");
+        } else if (isNaN(Number(tempRaw)) || !isFinite(Number(tempRaw))) {
+            errors.push("temperature must be a number");
+        }
+        return errors;
+    }
+
+    function onDialogSave() {
+        var fieldErrors = validateDialogFields();
+        if (fieldErrors.length) {
+            showDlgError(fieldErrors.join("\n"));
+            return;
+        }
+        var a = api();
+        if (!a) {
+            showDlgError("pywebview bridge not available");
+            return;
+        }
+
+        var cfg = {
+            name: dlgName.value.trim(),
+            api_base: dlgApiBase.value.trim(),
+            api_key: dlgApiKey.value.trim(),
+            model: dlgModel.value.trim(),
+            temperature: Number(dlgTemperature.value.trim())
+        };
+        if (dialogState.mode === "edit") {
+            cfg._old_name = dialogState.oldName;
+        }
+
+        showDlgError("");
+        dlgSaveBtn.disabled = true;
+        a.save_llm(cfg).then(function (res) {
+            dlgSaveBtn.disabled = false;
+            if (!res || res.ok === false) {
+                showDlgError(res ? res.error : "no response from bridge");
+                return;
+            }
+            closeLlmDialog();
+            toast("LLM saved: " + (res.llm ? res.llm.name : cfg.name), "ok");
+            refreshSettings();
+        }).catch(function (err) {
+            dlgSaveBtn.disabled = false;
+            showDlgError("save failed: " + err);
+        });
+    }
+
+    function onDialogRemove() {
+        var llm = getSelectedLlm();
+        if (!llm) return;
+        var ok = window.confirm(
+            "Remove LLM '" + llm.name + "'?\n" +
+            "Any role currently pointing to it will be cleared."
+        );
+        if (!ok) return;
+
+        var a = api();
+        if (!a) return;
+        a.remove_llm(llm.name).then(function (res) {
+            if (!res || res.ok === false) {
+                toast("Remove failed: " + (res ? res.error : "no response"), "error");
+                return;
+            }
+            var cleared = (res.cleared_roles || []).join(", ");
+            toast(
+                "LLM removed: " + llm.name +
+                (cleared ? " (cleared roles: " + cleared + ")" : ""),
+                "ok"
+            );
+            refreshSettings();
+        });
+    }
+
+    /* ── Settings event wiring ── */
+
+    document.getElementById("btn-llm-add").addEventListener("click", function () {
+        openLlmDialog(null);
+    });
+
+    document.getElementById("btn-llm-edit").addEventListener("click", function () {
+        var llm = getSelectedLlm();
+        if (!llm) {
+            toast("Select a row in the LLM table first", "error");
+            return;
+        }
+        openLlmDialog(llm);
+    });
+
+    document.getElementById("btn-llm-remove").addEventListener("click", onDialogRemove);
+
+    document.getElementById("llm-dialog-save").addEventListener("click", onDialogSave);
+    document.getElementById("llm-dialog-cancel").addEventListener("click", closeLlmDialog);
+
+    // Click on the overlay backdrop closes the dialog.
+    overlay.addEventListener("click", function (e) {
+        if (e.target === overlay) closeLlmDialog();
+    });
+
+    // Enter inside a dialog field triggers Save (Escape closes).
+    [dlgName, dlgApiBase, dlgApiKey, dlgModel, dlgTemperature].forEach(function (input) {
+        input.addEventListener("keydown", function (e) {
+            if (e.key === "Enter") {
+                e.preventDefault();
+                onDialogSave();
+            } else if (e.key === "Escape") {
+                closeLlmDialog();
+            }
+        });
+    });
+
+    roleJudgeSel.addEventListener("change", function () { onRoleChange("judge", roleJudgeSel); });
+    rolePromptsSel.addEventListener("change", function () { onRoleChange("prompts", rolePromptsSel); });
+    hlFlagSettings.addEventListener("change", onHlChange);
+
+    /* ═══════════════════════════ Bridge probe (Phase 1) ═══════════════════════════
+     * On load call window.pywebview.api.get_config(), log the result to the
+     * status line (proves the bridge) and initialise the Settings tab.
      */
+
+    function initSettings(cfg) {
+        state.llms = cfg.llms || [];
+        state.roles = cfg.roles || {};
+        state.hl = !!cfg.hl;
+        state.max_attempts = cfg.max_attempts;
+        renderLlmTable();
+        markLlmRowSelected();
+        renderRoleDropdowns();
+        hlFlagSettings.checked = state.hl;
+        if (hlFlag) hlFlag.checked = state.hl;
+    }
 
     function probeBridge() {
         if (window.pywebview && window.pywebview.api && window.pywebview.api.get_config) {
@@ -56,6 +423,7 @@
                         ", hl=" + cfg.hl +
                         ", max_attempts=" + cfg.max_attempts;
                     setStatus(msg, "ok");
+                    initSettings(cfg);
                 })
                 .catch(function (err) {
                     setStatus("Bridge error: " + err, "error");
