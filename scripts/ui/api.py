@@ -51,7 +51,61 @@ except ImportError:
     except ImportError:
         pass
 
-__all__ = ["Api"]
+__all__ = ["Api", "GuiHLBridge"]
+
+
+class GuiHLBridge:
+    """Human-in-the-loop bridge for the GUI (Phase 7, T7.1 — architecture §3.4, §3.8).
+
+    Satisfies the :class:`core.agent.HLBridge` protocol. The agent thread calls
+    :meth:`wait_for_response` and blocks until the human types a response in
+    the UI and clicks "Continue" (``Api.continue_hl`` sets the event).
+
+    Thread safety: all state is guarded by ``self._lock``; the blocking wait
+    happens on the event *outside* the lock.
+    """
+
+    def __init__(self, api: "Api") -> None:
+        self._api = api
+        self._lock = threading.Lock()
+        self._event = threading.Event()
+        self._response = ""
+
+    def wait_for_response(self) -> str:
+        """Block until the human supplies a response; return the text."""
+        with self._lock:
+            # Arm the wait: clear leftovers from a previous iteration, notify
+            # the UI (hl_waiting + source_prompt) and reset the event.
+            self._event.clear()
+            self._response = ""
+            self._api._set_hl_wait_state(
+                waiting=True,
+                source_prompt=self._api._read_workspace_file("srcprompt.txt"),
+            )
+        self._event.wait()
+        with self._lock:
+            self._api._set_hl_wait_state(waiting=False)
+            return self._response
+
+    def release(self, response_text: str) -> None:
+        """Set the response text and release the blocked agent thread.
+
+        Named ``release`` (not ``continue``) because ``continue`` is a Python
+        keyword and cannot be used as an attribute name in dot notation.
+        """
+        with self._lock:
+            self._response = response_text
+        self._event.set()
+
+    # ---- test helpers -------------------------------------------------
+    @property
+    def event(self) -> threading.Event:
+        return self._event
+
+    @property
+    def pending(self) -> str:
+        with self._lock:
+            return self._response
 
 
 def _stub() -> dict:
@@ -82,6 +136,25 @@ class Api:
         self._source_prompt = ""
         self._optimization_result = ""
         self._worker: Optional[threading.Thread] = None
+        # Phase 7 (T7.1): one shared HL bridge — all HL waits in a session
+        # are released via Api.continue_hl on this instance.
+        self._hl_bridge: Optional[GuiHLBridge] = GuiHLBridge(self)
+
+    # ------------------------------------------- Phase 7 — HL helpers
+    def _set_hl_wait_state(self, waiting: bool, source_prompt: str = "") -> None:
+        """Update the HL wait state under the main lock (Phase 7, T7.1)."""
+        with self._lock:
+            self._hl_waiting = waiting
+            if source_prompt:
+                self._source_prompt = source_prompt
+
+    def _read_workspace_file(self, name: str) -> str:
+        """Read a workspace file (UTF-8); empty string if missing."""
+        try:
+            with open(os.path.join(self._base_dir, name), "r", encoding="utf-8") as f:
+                return f.read()
+        except OSError:
+            return ""
 
     # ------------------------------------------------------------- Phase 1
     def get_config(self) -> dict:
@@ -352,7 +425,9 @@ class Api:
                         self._base_dir,
                         bool(hl),
                         on_event=_emit,
-                        # hl_bridge is wired in Phase 7 (T7.2)
+                        # Phase 7 (T7.2): inject the GUI HL bridge so the
+                        # agent can pause for a human response when hl=True.
+                        hl_bridge=self._hl_bridge,
                     )
                     _emit(
                         f"Optimization finished: success={res.success}, "
@@ -381,12 +456,26 @@ class Api:
             return {"ok": False, "error": f"start_run failed: {e}"}
 
     def continue_hl(self, response_text: str) -> Optional[dict]:
-        """Fill the HL response and release the bridge event (Phase 7).
+        """Fill the HL response and release the bridge event (Phase 7, T7.6).
 
-        Not implemented in Phase 5 — the HL flow is wired in Phase 7.
-        Returns ``{"ok": False, "error": "HL not implemented yet"}``.
+        The human types the response in the "Result prompt" field and clicks
+        the (now "Continue") start button. ``response_text`` is stored in the
+        HL bridge and its event is set, unblocking the agent thread which is
+        inside ``wait_for_response``.
+
+        Returns ``{"ok": True}`` on success, or
+        ``{"ok": False, "error": str}`` when not waiting / empty input.
         """
-        return {"ok": False, "error": "HL not implemented yet (Phase 7)"}
+        try:
+            text = str(response_text or "")
+            if not text.strip():
+                return {"ok": False, "error": "HL response text is empty"}
+            if not self._hl_waiting:
+                return {"ok": False, "error": "Not waiting for an HL response"}
+            self._hl_bridge.release(text)
+            return {"ok": True}
+        except Exception as e:
+            return {"ok": False, "error": f"continue_hl failed: {e}"}
 
     def get_state(self) -> dict:
         """Return the current execution state (polled from JS every 500 ms).

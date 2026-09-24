@@ -21,18 +21,18 @@
 
 ## Phase 0 — Project bootstrap
 
-- [ ] **T0.1** Create folder structure per architecture §2:
+- [x] **T0.1** Create folder structure per architecture §2:
       `scripts/main/`, `scripts/core/`, `scripts/ui/js/`, `scripts/dev/`,
       `scripts/tests/`, `workspace/` (with `.gitkeep`).
-- [ ] **T0.2** Create `requirements.txt` with: `langchain-core`,
+- [x] **T0.2** Create `requirements.txt` with: `langchain-core`,
       `langchain-openai`, `langgraph`, `PyYAML`, `pywebview`.
-- [ ] **T0.3** Create seed `config.yaml` from the schema in architecture §6,
+- [x] **T0.3** Create seed `config.yaml` from the schema in architecture §6,
       seeded with the two LLMs from
       [`scripts/template/config.yaml`](scripts/template/config.yaml)
       (`qwen-judge` / `gemma-target`), `roles`, `hl: false`, `max_attempts: 30`.
-- [ ] **T0.4** Add package inits: `scripts/core/__init__.py`,
+- [x] **T0.4** Add package inits: `scripts/core/__init__.py`,
       `scripts/ui/__init__.py`, `scripts/tests/__init__.py`.
-- [ ] **T0.5** `python -c "import core"` works from the project root
+- [x] **T0.5** `python -c "import core"` works from the project root
       (paths set up so `scripts/` is on `sys.path` in `app.py`).
 
 *No GUI yet — scaffolding only.*
@@ -232,27 +232,27 @@ the real window — see T6.6/T6.7. Verify also: rapid double-click on "Start"
 
 ## Phase 7 — Human-in-the-loop (GUI test: HL flow in the UI)
 
-- [ ] **T7.1** GUI `HLBridge` in `api.py`: `wait_for_response()` sets
+- [x] **T7.1** GUI `HLBridge` in `api.py`: `wait_for_response()` sets
       `hl_waiting=True`, `source_prompt` = content of `srcprompt.txt`, waits
       on `threading.Event`; `continue_hl(text)` validates non-empty, sets the
       event with the text, clears `hl_waiting`.
-- [ ] **T7.2** `start_run(..., hl=True)` injects the GUI bridge into
+- [x] **T7.2** `start_run(..., hl=True)` injects the GUI bridge into
       `run_optimization`.
-- [ ] **T7.3** `app.js` — HL area: "Human-in-the-loop" checkbox bound to
+- [x] **T7.3** `app.js` — HL area: "Human-in-the-loop" checkbox bound to
       `api.get_hl()`; "Source prompt" field (multiline, 10 lines, read-only)
       + "Copy" icon button → `api.copy_to_clipboard(text)`; "Result prompt"
       field (multiline, 10 lines).
-- [ ] **T7.4** `copy_to_clipboard` in `api.py`: `window.evaluate_js`
+- [x] **T7.4** `copy_to_clipboard` in `api.py`: `window.evaluate_js`
       clipboard write, with textarea + `execCommand('copy')` fallback.
-- [ ] **T7.5** `app.js` — HL wait state: when `hl_waiting` → "Start" button
+- [x] **T7.5** `app.js` — HL wait state: when `hl_waiting` → "Start" button
       enabled with text "Continue"; "Result prompt" enabled and focused;
       clicking "Result prompt" while **not** in wait state → user-error
       toast; "Continue" with empty response → error toast, bridge not
       released.
-- [ ] **T7.6** `app.js` — "Continue" click → `api.continue_hl(text)` →
+- [x] **T7.6** `app.js` — "Continue" click → `api.continue_hl(text)` →
       button disabled again ("Start" state per polling), progress rendering
       resumes.
-- [ ] **T7.7** E2E manual test (HL mode): enable flag → Start → "Start"
+- [x] **T7.7** E2E manual test (HL mode): enable flag → Start → "Start"
       becomes "Continue", Source prompt filled (verify it matches
       `workspace/srcprompt.txt`), Copy puts it into the clipboard, enter a
       response in `ШАБЛОН:`/`ИЗМЕНЕНИЯ:` format → Continue → loop resumes
@@ -264,20 +264,20 @@ Continue with empty field).
 
 ## Phase 8 — Persistence, isolation, polish (GUI test: full regression)
 
-- [ ] **T8.1** Fresh workspace per run: `write_run_files` clears previous
+- [x] **T8.1** Fresh workspace per run: `write_run_files` clears previous
       run artifacts (final_prompt.txt, srcprompt.txt, dstprompt.txt,
       prompt_V*.txt) — verify no leakage between runs.
-- [ ] **T8.2** Restart persistence: modify Settings + HL flag, restart app →
+- [x] **T8.2** Restart persistence: modify Settings + HL flag, restart app →
       everything restored (regression of Phase 2 on the final build).
-- [ ] **T8.3** Polish pass: tooltips on every icon button (checklist from
+- [x] **T8.3** Polish pass: tooltips on every icon button (checklist from
       architecture §7.3), consistent disabled states (Start during run,
       dialog buttons while saving), multiline heights consistent (10 lines /
       5 lines for variable value), no console errors in the page, window
       size/title final.
-- [ ] **T8.4** `readme.md`: project description, install
+- [x] **T8.4** `readme.md`: project description, install
       (`pip install -r requirements.txt`), run (`python scripts/main/app.py`),
       configuration guide, HL usage walkthrough.
-- [ ] **T8.5** Final regression (manual, all scenarios in one session):
+- [x] **T8.5** Final regression (manual, all scenarios in one session):
       3.1 add LLM → 3.2 edit LLM → 3.3 remove LLM → 3.4 select roles →
       3.5 configure prompt + variables + Run prompt → 3.6 validation abort →
       3.7 automatic run → 3.7 HL run → restart → config intact.

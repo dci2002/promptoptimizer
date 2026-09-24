@@ -650,6 +650,31 @@
     btnVarRemove.addEventListener("click", onVarRemove);
     document.getElementById("btn-var-refresh").addEventListener("click", onVarRefresh);
     document.getElementById("btn-run-load").addEventListener("click", onRunLoad);
+
+    // Phase 7 (T7.4): copy the Source prompt (the agent's analysis prompt)
+    // to the system clipboard via the bridge.
+    document.getElementById("btn-copy-source").addEventListener("click", function () {
+        var _api = api();
+        if (!_api || !_api.copy_to_clipboard) {
+            toast("Bridge not ready", "error");
+            return;
+        }
+        var text = sourcePromptField.value;
+        if (!text) {
+            toast("Nothing to copy yet — start an HL run first", "info");
+            return;
+        }
+        _api.copy_to_clipboard(text).then(function (res) {
+            if (!res || res.ok === false) {
+                toast(res && res.error ? res.error : "Copy failed", "error");
+                return;
+            }
+            toast("Source prompt copied to clipboard", "ok");
+        }).catch(function (err) {
+            toast("Copy failed: " + err, "error");
+        });
+    });
+
     document.getElementById("btn-run-prompt").addEventListener("click", onRunPrompt);
     document.getElementById("var-dialog-save").addEventListener("click", onVarSave);
     document.getElementById("var-dialog-cancel").addEventListener("click", closeVarDialog);
@@ -711,6 +736,15 @@
     rolePromptsSel.addEventListener("change", function () { onRoleChange("prompts", rolePromptsSel); });
     hlFlagSettings.addEventListener("change", onHlChange);
 
+    // Phase 7 (T7.3): the Prompts-tab HL checkbox mirrors the Settings-tab
+    // one (single source of truth is the persisted config).
+    if (hlFlag) {
+        hlFlag.addEventListener("change", function () {
+            if (hlFlagSettings) hlFlagSettings.checked = hlFlag.checked;
+            onHlChange();
+        });
+    }
+
     /* ═══════════════════════════ Phase 5 — Execution area ═══════════════════════════
      * Start button → api.start_run() → worker thread (dry-run in Phase 5).
      * A 500 ms polling loop calls api.get_state() and renders:
@@ -726,12 +760,14 @@
     var progressField = document.getElementById("progress");
     var optimizationResultField = document.getElementById("optimization-result");
     var hlResultPrompt = document.getElementById("hl-result-prompt");
+    var sourcePromptField = document.getElementById("source-prompt");
 
     var execState = {
         running: false,
         hlWaiting: false,
         lastProgress: "",
         lastResult: "",
+        lastSourcePrompt: "",
         pollTimer: null,
     };
 
@@ -757,9 +793,26 @@
         btnStart.title = btn.text;
         btnStart.setAttribute("aria-label", btn.text);
 
+        // Phase 7 (T7.5): HL wait state — fill the Source prompt field,
+        // focus the Result prompt field and enable it (it is the only input
+        // the human needs to act on while the agent is blocked).
+        var hlWaiting = !!st.hl_waiting;
+        if (st.source_prompt !== execState.lastSourcePrompt) {
+            sourcePromptField.value = st.source_prompt || "";
+            execState.lastSourcePrompt = st.source_prompt || "";
+        }
+        if (hlWaiting) {
+            optimizationResultField.disabled = true;
+            hlResultPrompt.disabled = false;
+            hlResultPrompt.focus();
+        } else {
+            optimizationResultField.disabled = false;
+            hlResultPrompt.disabled = true;
+        }
+
         // Track state for the polling loop.
         execState.running = !!st.running;
-        execState.hlWaiting = !!st.hl_waiting;
+        execState.hlWaiting = hlWaiting;
     }
 
     function pollState() {
@@ -805,8 +858,10 @@
         // (already done in onStartClick, but keep as safety net).
         execState.lastProgress = "";
         execState.lastResult = "";
+        execState.lastSourcePrompt = "";
         progressField.value = "";
         optimizationResultField.value = "";
+        sourcePromptField.value = "";
         execState.running = true;
         execState.pollTimer = setInterval(pollState, 500);
     }
@@ -818,10 +873,31 @@
             return;
         }
 
-        // If the button says "Continue", handle the HL continue (Phase 7).
-        // For now, HL is not implemented — show a hint.
-        if (btnStart.title === "Continue" || execState.hlWaiting) {
-            toast("HL continue is wired in Phase 7", "info");
+        // Phase 7 (T7.6): if the agent is blocked waiting for a human
+        // response, the button reads "Continue" — send the Result prompt
+        // text to the HL bridge and resume the run.
+        if (execState.hlWaiting) {
+            var hlText = hlResultPrompt.value;
+            if (!hlText || !hlText.trim()) {
+                // T7.5: user-error toast when the response is empty.
+                toast("Enter the response in the Result prompt field first", "error");
+                hlResultPrompt.focus();
+                return;
+            }
+            var aCont = api();
+            if (!aCont || !aCont.continue_hl) {
+                toast("Bridge not ready", "error");
+                return;
+            }
+            aCont.continue_hl(hlText).then(function (res) {
+                if (!res || res.ok === false) {
+                    toast(res && res.error ? res.error : "HL continue failed", "error");
+                    return;
+                }
+                setStatus("HL response sent — run resumed", "ok");
+            }).catch(function (err) {
+                toast("HL continue failed: " + err, "error");
+            });
             return;
         }
 
@@ -836,10 +912,17 @@
         });
 
         // T6.4: clear Progress + Optimization result before a real run.
+        // Phase 7: also clear the HL fields and disable the Result prompt
+        // until the agent actually waits for a human response.
         execState.lastProgress = "";
         execState.lastResult = "";
+        execState.lastSourcePrompt = "";
         progressField.value = "";
         optimizationResultField.value = "";
+        sourcePromptField.value = "";
+        hlResultPrompt.value = "";
+        hlResultPrompt.disabled = true;
+        optimizationResultField.disabled = false;
 
         setStatus("Starting run …", "info");
         a.start_run(promptField.value, resultField.value, variables, state.hl)
