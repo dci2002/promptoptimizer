@@ -23,6 +23,7 @@ talking to a Python bridge.
 | 3.6 | Validation — roles set, prompt non-empty, all `{{var}}` placeholders have values |
 | 3.7 | **Start** — full automatic optimization loop (ReAct agent) |
 | 3.7 HL | **Human-in-the-loop** — the agent pauses at the analyze step; the human reads the analysis prompt, types a corrected template + changes, and clicks **Continue** |
+| 3.8 | **Stop** — abort a running optimization at the next agent step (the window close stops the run too) |
 
 ---
 
@@ -137,6 +138,16 @@ Optimization finished: success=True, attempts=4, result=512 chars
 
 The final optimized template appears in **Optimization result**.
 
+#### Stopping a run
+
+While a run is in progress the **⏹ Stop** button (next to Start) becomes
+active. Clicking it requests a cooperative stop: the current agent step
+(including any in-flight LLM call) runs to completion, then the loop
+terminates. The Progress log ends with `Run stopped by user`, the
+**Optimization result** field stays empty, and Start becomes active again.
+Closing the application window while a run is in progress stops the run the
+same way.
+
 #### Human-in-the-loop (HL) mode
 
 When **hl** is enabled, the agent pauses at each analyze step:
@@ -145,8 +156,8 @@ When **hl** is enabled, the agent pauses at each analyze step:
    blocks. The **Source prompt** field in the UI fills with that text
    (click **⧉ Copy** to send it to your clipboard — e.g. to paste into a
    chat with a more powerful LLM).
-2. The Start button changes to **Continue** and is disabled while the agent
-   is blocked.
+2. The Start button changes to **Continue**. It is initially disabled and
+   becomes active as soon as you start typing in the **Result prompt** field.
 3. Type the response in **Result prompt** using the template contract:
 
    ```
@@ -188,9 +199,10 @@ After a successful run the workspace contains:
 python -m pytest scripts/tests/ -v
 ```
 
-158 unit + integration tests (no real LLM calls — all LLM interactions are
+157 unit tests (no real LLM calls — all LLM interactions are
 mocked). Coverage includes config, prompt I/O, LLM layer, runner
-orchestration, agent tools, validation, start_run, and the HL bridge.
+orchestration, agent tools (incl. cooperative stop), validation, start_run,
+and the HL bridge.
 
 ---
 
@@ -216,7 +228,7 @@ orchestration, agent tools, validation, start_run, and the HL bridge.
 │   │       ├── app.js       # all UI logic
 │   │       └── style.css
 │   ├── dev/                 # smoke / probe scripts (manual testing)
-│   └── tests/               # pytest suite (158 tests)
+│   └── tests/               # pytest suite (157 tests)
 └── workspace/               # per-run file sandbox (wiped each run)
 ```
 

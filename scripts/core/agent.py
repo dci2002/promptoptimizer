@@ -34,12 +34,18 @@ Tools (unchanged from the template): ``build_prompt``, ``llm2``,
 from __future__ import annotations
 
 import os
+import threading
 from typing import Callable, Optional, Protocol
 
 from core.llm import LLM2Executor, make_llm1
 from core.prompt_io import build_final_prompt
 
-__all__ = ["HLBridge", "ReActAgent"]
+__all__ = ["HLBridge", "RunStopped", "ReActAgent"]
+
+
+class RunStopped(Exception):
+    """Raised when the user requests a stop (Stop button / window close)."""
+    ...
 
 
 class HLBridge(Protocol):
@@ -183,6 +189,7 @@ class ReActAgent:
         hl: bool = False,
         on_event: Optional[Callable[[str], None]] = None,
         hl_bridge: Optional[HLBridge] = None,
+        stop_event: Optional[threading.Event] = None,
     ):
         self.llm2 = llm2_executor
         self.llm1_config = dict(llm1_config or {})
@@ -190,6 +197,7 @@ class ReActAgent:
         self.hl = bool(hl)
         self.on_event = on_event
         self.hl_bridge = hl_bridge
+        self.stop_event = stop_event
         self.attempt_history: list[dict] = []
         self._llm = None
         self._current_attempt = 1
@@ -206,6 +214,14 @@ class ReActAgent:
             self.on_event(msg)
         except Exception:
             pass  # logging must never break the run
+
+    # ----- Stop check -----
+
+    def _check_stop(self) -> None:
+        """Raise ``RunStopped`` if the stop_event is set."""
+        if self.stop_event is not None and self.stop_event.is_set():
+            self._emit("[STOP] Run stopped by user")
+            raise RunStopped()
 
     # ----- Lazy initialization of the langchain LLM -----
 
@@ -251,6 +267,7 @@ class ReActAgent:
             Returns:
                 The path to final_prompt.txt where the fully-substituted prompt was saved.
             """
+            self._check_stop()
             path = build_final_prompt(template, base_dir)
             self._emit(f"[TOOL] build_prompt -> {os.path.basename(path)}")
             return path
@@ -266,6 +283,7 @@ class ReActAgent:
             Returns:
                 The raw result from the LLM.
             """
+            self._check_stop()
             result = self.llm2.execute()
             self._emit(f"[TOOL] llm2: {len(result)} chars")
             return result
@@ -297,6 +315,7 @@ class ReActAgent:
                 A JSON array of objects, each with "question" and "answer" keys,
                 e.g. [{"question": "...", "answer": "..."}, ...]
             """
+            self._check_stop()
             # Read the final prompt from the file written by build_prompt.
             if not os.path.exists(self.llm2.final_prompt_file):
                 raise FileNotFoundError(
@@ -364,6 +383,7 @@ class ReActAgent:
             Returns:
                 A message confirming the save and the file path.
             """
+            self._check_stop()
             path = self._save_template(template, output_dir)
             self._emit(f"[TOOL] save_prompt -> {os.path.basename(path)}")
             return f"Saved template version {self._current_attempt - 1} to {path}"
@@ -396,6 +416,7 @@ class ReActAgent:
             Returns:
                 The improved prompt TEMPLATE (with the same variable NAMES).
             """
+            self._check_stop()
             llm = self._get_llm()
 
             # Build change history section
@@ -527,6 +548,7 @@ class ReActAgent:
             Args:
                 final_template: The best / final prompt TEMPLATE (with variable NAMES as {variable_name} placeholders).
             """
+            self._check_stop()
             self._final_prompt = final_template
             self._emit(f"[TOOL] finish: {len(final_template)} chars template accepted")
             return "DONE"
@@ -622,10 +644,18 @@ class ReActAgent:
 
         self._emit("[AGENT] Starting ReAct agent (llm1) …")
         # Invoke the agent. `recursion_limit` caps the number of agent steps.
-        final_state = agent.invoke(
-            {"messages": [("user", task)]},
-            config={"recursion_limit": self.max_attempts * 10},
-        )
+        try:
+            final_state = agent.invoke(
+                {"messages": [("user", task)]},
+                config={"recursion_limit": self.max_attempts * 10},
+            )
+        except RunStopped:
+            # Propagate the stop to the runner.
+            raise
+
+        # Check if stopped after agent.invoke() returns (e.g., stop was set
+        # during the final llm2 call or while the agent was finishing).
+        self._check_stop()
 
         # Extract the final prompt TEMPLATE: prefer the one passed to `finish`,
         # otherwise fall back to the last AIMessage content.
@@ -643,6 +673,7 @@ class ReActAgent:
             final_template = prompt_template
 
         # Build the final prompt from the template (Python-side substitution).
+        self._check_stop()
         self._emit("[AGENT] Building final prompt from template …")
         final_prompt_file = build_final_prompt(final_template, base_dir)
 

@@ -136,6 +136,9 @@ class Api:
         self._source_prompt = ""
         self._optimization_result = ""
         self._worker: Optional[threading.Thread] = None
+        # Cooperative stop: set by stop_run() / shutdown(), checked by the
+        # agent tools to abort the run cleanly.
+        self._stop_event = threading.Event()
         # Phase 7 (T7.1): one shared HL bridge — all HL waits in a session
         # are released via Api.continue_hl on this instance.
         self._hl_bridge: Optional[GuiHLBridge] = GuiHLBridge(self)
@@ -390,6 +393,8 @@ class Api:
                 self._source_prompt = ""
                 self._optimization_result = ""
                 self._hl_waiting = False
+                # Reset the stop event for a fresh run.
+                self._stop_event.clear()
 
             # Normalise the JS variables array into a dict.
             var_map: dict[str, str] = {}
@@ -428,6 +433,10 @@ class Api:
                         # Phase 7 (T7.2): inject the GUI HL bridge so the
                         # agent can pause for a human response when hl=True.
                         hl_bridge=self._hl_bridge,
+                        # Cooperative stop: checked by agent tools to abort
+                        # the run when the user clicks Stop or closes the
+                        # window.
+                        stop_event=self._stop_event,
                     )
                     _emit(
                         f"Optimization finished: success={res.success}, "
@@ -477,6 +486,48 @@ class Api:
         except Exception as e:
             return {"ok": False, "error": f"continue_hl failed: {e}"}
 
+    def stop_run(self) -> dict:
+        """Request the in-flight optimization run to stop.
+
+        Sets the cooperative ``_stop_event``; the agent checks it at the start
+        of every tool call and raises ``RunStopped``, which is caught by
+        :func:`core.runner.run_optimization` and the worker clears the
+        ``running`` flag.
+
+        Returns ``{"ok": True}`` if a run is in progress (or was just
+        requested), ``{"ok": False, "error": "..."}`` otherwise.
+        """
+        try:
+            with self._lock:
+                if not self._running:
+                    return {"ok": False, "error": "No run in progress"}
+            self._stop_event.set()
+            return {"ok": True}
+        except Exception as e:
+            return {"ok": False, "error": f"stop_run failed: {e}"}
+
+    def shutdown(self) -> None:
+        """Stop the in-flight run (if any) and wait for the worker to finish.
+
+        Called from the pywebview window-close callback
+        (``window.events.closed += api.shutdown``) so that all Python threads
+        terminate before the process exits (req: "при закрытии формы должны
+        останавливаться все python потоки").
+
+        This method is idempotent and safe to call when no run is in progress.
+        """
+        # Request the agent to stop (no-op if not running).
+        self._stop_event.set()
+        # Wait for the worker thread to finish (it will exit soon because the
+        # agent tools raise RunStopped on the next check).
+        worker = self._worker
+        if worker is not None and worker.is_alive():
+            worker.join(timeout=15)
+        # Ensure the running flag is cleared regardless of the worker outcome.
+        with self._lock:
+            self._running = False
+            self._hl_waiting = False
+
     def get_state(self) -> dict:
         """Return the current execution state (polled from JS every 500 ms).
 
@@ -501,6 +552,8 @@ class Api:
             else:
                 start_text = "Start"
             start_enabled = not running
+            # Stop button: enabled only while a run is in progress.
+            stop_enabled = running
 
             return {
                 "ok": True,
@@ -512,6 +565,9 @@ class Api:
                 "start_button": {
                     "enabled": start_enabled,
                     "text": start_text,
+                },
+                "stop_button": {
+                    "enabled": stop_enabled,
                 },
             }
         except Exception as e:

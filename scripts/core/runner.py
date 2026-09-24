@@ -26,10 +26,13 @@ into ``{"ok": False, "error": "..."}`` dicts.
 
 from __future__ import annotations
 
+import threading
 from dataclasses import dataclass
-from typing import Callable, Optional
+from typing import TYPE_CHECKING, Callable, Optional
 
 from core.llm import LLM2Executor
+if TYPE_CHECKING:
+    from core.agent import HLBridge  # type-only (lazy at runtime)
 from core.prompt_io import (
     build_final_prompt,
     validate_run_inputs,
@@ -221,6 +224,7 @@ def run_optimization(
     hl: bool,
     on_event: Optional[Callable[[str], None]] = None,
     hl_bridge: Optional["HLBridge"] = None,
+    stop_event: Optional["threading.Event"] = None,
 ) -> OptimizationResult:
     """Full "Start" optimization pipeline (Phase 5, T5.4).
 
@@ -251,6 +255,10 @@ def run_optimization(
         Optional log callback; receives step strings.
     hl_bridge:
         Optional HLBridge instance; required when ``hl`` is True.
+    stop_event:
+        Optional ``threading.Event``; when set, the agent raises ``RunStopped``
+        and this function returns an ``OptimizationResult`` with
+        ``success=False`` and a note about the stop.
 
     Returns
     -------
@@ -265,8 +273,14 @@ def run_optimization(
         API key missing/placeholder, or roles not resolvable.
     RuntimeError
         The LLM call failed, or HL mode was enabled without a bridge.
+
+    Notes
+    -----
+    If ``stop_event`` is set during the run, ``RunStopped`` is caught and an
+    ``OptimizationResult`` with ``success=False`` is returned (the run is
+    aborted cleanly).
     """
-    from core.agent import HLBridge, ReActAgent  # lazy: langchain boundary
+    from core.agent import HLBridge, RunStopped, ReActAgent  # lazy: langchain boundary
 
     def _emit(msg: str) -> None:
         if on_event:
@@ -298,17 +312,27 @@ def run_optimization(
         hl=hl,
         on_event=on_event,
         hl_bridge=hl_bridge,
+        stop_event=stop_event,
     )
     output_dir = base_dir  # versioned templates saved in the workspace
 
     # 4. Run the optimization loop.
     _emit("Starting optimization loop …")
-    result = agent.run(
-        prompt_template=template,
-        expected_result=expected,
-        base_dir=base_dir,
-        output_dir=output_dir,
-    )
+    try:
+        result = agent.run(
+            prompt_template=template,
+            expected_result=expected,
+            base_dir=base_dir,
+            output_dir=output_dir,
+        )
+    except RunStopped:
+        _emit("Run stopped by user")
+        return OptimizationResult(
+            success=False,
+            final_template=template,
+            final_result="",
+            attempts=0,
+        )
 
     return OptimizationResult(
         success=result["success"],

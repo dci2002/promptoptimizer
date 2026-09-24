@@ -16,7 +16,7 @@
 ## Two tabs:
 ### 2.1. "Prompts"
 - 2.1.1. **Prompt settings area** — contains the fields: "**Prompt**" (multiline field, 10 lines high, with a **button "Load from files"** to the right of the label), "**Result**" (with the **button "Run prompt"** and a **button "Refresh variables"**), **variables table** (with "Add", "Edit", "Remove" buttons) with columns: Variable, Value
-- 2.1.2. **Execution area** — contains the **button "Start"**, the **"Progress" field** for tracking progress (multiline, 10 lines high), the **"Optimization result" field** — multiline field (10 lines high)
+- 2.1.2. **Execution area** — contains the **button "Start"** and the **button "Stop"** (next to "Start"), the **"Progress" field** for tracking progress (multiline, 10 lines high), the **"Optimization result" field** — multiline field (10 lines high)
 - 2.1.3. **"Human-in-the-loop" area** — contains the **"Human-in-the-loop" flag** and two multiline fields (10 lines high): **"Source prompt"** (next to the field — **a "Copy" button** — to the clipboard), **"Result prompt"** (available when the flag is enabled, otherwise cleared and disabled)
 ### 2.2. "Settings"
 - 2.2.1. **"LLM list" table** with "Add", "Edit", "Remove" buttons, columns: name, api_base, api_key, model, temperature
@@ -56,21 +56,27 @@
     - the prompt text is provided, and for the variables specified in the prompt text (in the "{{Variable name}}" format) — the values of all variables are set
   - if the settings are not filled in — the action is interrupted
 - **3.7. Running the prompt in automatic mode**
-  - started by the "Start" button (the button becomes disabled until processing is complete) with the "Human-in-the-loop" option disabled
+  - started by the "Start" button (the button becomes disabled until processing is complete, the "Stop" button becomes active) with the "Human-in-the-loop" option disabled
   - the check from item 3.6 is performed — if it does not pass — the algorithm is not executed
   - writing to the source files for the processing loop (prompt.txt, result.txt, {{var}}.txt) is performed
   - the data processing loop is executed (the logic is in the template in /scripts/template/interview_copilot.py) — at the same time the logging of steps and tool calls is output to the "Progress" field
   - after the processing is complete, the resulting prompt is displayed in the "Optimization result" field (i.e., the agent must return the obtained prompt template)
 - **3.7. Running the prompt in Human-in-the-loop mode**
-  - started by the "Start" button (the button becomes disabled until processing is complete) with the "Human-in-the-loop" option enabled
+  - started by the "Start" button (the button becomes disabled until processing is complete, the "Stop" button becomes active) with the "Human-in-the-loop" option enabled
   - the check from item 3.6 is performed — if it does not pass — the algorithm is not executed
   - writing to the source files for the processing loop (prompt.txt, result.txt, {{var}}.txt) is performed
   - the data processing loop is executed (the logic is in the template in /scripts/template/interview_copilot.py) — at the same time the logging of steps and tool calls is output to the "Progress" field
     - intermediate stage with prompt waiting
-      - the "Start" button becomes active and its text changes to "Continue" (if the "Result prompt" field is pressed, it causes a user error)
+      - the "Start" button becomes active and its text changes to "Continue"; the button is initially disabled and becomes active as soon as the user starts typing in the "Result prompt" field (if the "Result prompt" field is pressed while not in HL-wait state, it causes a user error)
       - the result from the file srcprompt.txt is displayed in the "Source prompt" field — it can be copied to the clipboard via the "Copy" button
       - the user enters text into the "Result prompt" field, clicks the "Continue" button (the button becomes inactive)
   - after the processing is complete, the resulting prompt is displayed in the "Optimization result" field (i.e., the agent must return the obtained prompt template)
+- **3.8. Stopping a running prompt optimization**
+  - the user clicks the "Stop" button while the processing loop is running (in automatic or Human-in-the-loop mode)
+  - the request to stop is recorded; the loop completes its current step (in particular, an in-flight LLM call is not interrupted) and then terminates — the stop is checked before each agent step and before each LLM call of the loop
+  - "Run stopped by user" is written to the "Progress" field; the "Optimization result" field is not filled
+  - the "Start" button becomes active again, the "Stop" button becomes inactive
+  - the same stop occurs when the application window is closed while the processing loop is running
 # Styles
 - if not explicitly specified — the fields are text, single-line
 - buttons are displayed as icons, when hovering over a button a text tooltip appears

@@ -207,7 +207,7 @@ class TestStartRunBridgeInjection:
         api = _make_api(tmp_path)
 
         def _fake_run(cfg_data, template, expected, variables, base_dir, hl,
-                      on_event=None, hl_bridge=None):
+                      on_event=None, hl_bridge=None, stop_event=None):
             return OptimizationResult(
                 success=True, final_template="t", final_result="r", attempts=1,
             )
@@ -236,7 +236,7 @@ class TestHlFullCycle:
         human_replied = threading.Event()
 
         def _hl_run(cfg_data, template, expected, variables, base_dir, hl,
-                    on_event=None, hl_bridge=None):
+                    on_event=None, hl_bridge=None, stop_event=None):
             # Mimic the real pipeline: write the analysis prompt, then
             # block on the bridge exactly like ReActAgent does.
             on_event and on_event("Validation passed")

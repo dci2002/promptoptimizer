@@ -6,7 +6,6 @@ Covers:
     successful call (ChatOpenAI mocked at the boundary), reasoning_effort
     always None, LLM failure wrapped in RuntimeError.
   - make_llm1: API-key validation + factory returns a ChatOpenAI.
-  - SYSTEM_MESSAGE constant.
 
 langchain is never actually used here: the ChatOpenAI symbol is monkeypatched
 into the langchain_openai module before it is imported lazily.
@@ -21,7 +20,7 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from core.llm import LLM2Executor, SYSTEM_MESSAGE, make_llm1
+from core.llm import LLM2Executor, make_llm1
 
 
 def _install_mock_langchain(monkeypatch, invoke_result="LLM-ANSWER"):
@@ -59,11 +58,6 @@ def _valid_llm2_config(base_dir: str) -> dict:
         "temperature": 0.0,
         "base_dir": base_dir,
     }
-
-
-class TestSystemMessage:
-    def test_constant_contains_directive(self):
-        assert "without showing your reasoning" in SYSTEM_MESSAGE
 
 
 class TestLLM2ExecutorApiKeyIdKey:
@@ -108,11 +102,10 @@ class TestLLM2ExecutorExecute:
         assert kwargs["openai_api_key"] == "sk-test"
         assert kwargs["openai_api_base"] == "http://localhost:1234/v1"
         assert kwargs["model"] == "gemma-target"
-        # invoke was called with [System, Human]
+        # invoke was called with [Human] only — no system prompt
         messages = fake_chat.return_value.invoke.call_args.args[0]
-        assert len(messages) == 2
-        assert messages[0].content == SYSTEM_MESSAGE
-        assert messages[1].content == "final prompt text"
+        assert len(messages) == 1
+        assert messages[0].content == "final prompt text"
 
     def test_llm_failure_wrapped_in_runtime_error(self, tmp_path, monkeypatch):
         fake_chat = _install_mock_langchain(monkeypatch)

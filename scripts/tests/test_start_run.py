@@ -190,7 +190,7 @@ class TestStartRunRealRunCompletion:
         events_seen: list[str] = []
 
         def _fake_run(cfg_data, template, expected, variables, base_dir, hl,
-                      on_event=None, hl_bridge=None):
+                      on_event=None, hl_bridge=None, stop_event=None):
             if on_event:
                 on_event("[TEST] step 1")
                 on_event("[TEST] step 2")
@@ -238,7 +238,7 @@ class TestStartRunRealRunCompletion:
         api = self._make_api(tmp_path)
 
         def _fake_run(cfg_data, template, expected, variables, base_dir, hl,
-                      on_event=None, hl_bridge=None):
+                      on_event=None, hl_bridge=None, stop_event=None):
             return OptimizationResult(
                 success=True, final_template="t", final_result="r", attempts=1,
             )

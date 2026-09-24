@@ -20,16 +20,10 @@ from __future__ import annotations
 
 import os
 
-__all__ = ["LLM2Executor", "make_llm1", "SYSTEM_MESSAGE"]
+__all__ = ["LLM2Executor", "make_llm1"]
 
 #: Placeholder keys rejected by the validators (template behavior).
 _PLACEHOLDER_KEYS = ("", "your-api-key-here")
-
-#: System message for the one-shot llm2 call (template, verbatim).
-SYSTEM_MESSAGE = (
-    "You are a helpful assistant. "
-    "Respond directly without showing your reasoning."
-)
 
 
 def _check_api_key(api_key: str, label: str) -> None:
@@ -50,8 +44,7 @@ class LLM2Executor:
       by :func:`core.prompt_io.build_final_prompt`);
     - calls the LLM via ``ChatOpenAI`` (OpenAI-compatible ``api_base``)
       with ``reasoning_effort=None``;
-    - a fixed system message instructs the model to answer directly
-      without showing its reasoning;
+    - no system prompt is sent — only the final prompt as a user message;
     - validates the API key before any network call.
 
     Parameters
@@ -96,7 +89,7 @@ class LLM2Executor:
 
         try:
             from langchain_openai import ChatOpenAI
-            from langchain_core.messages import HumanMessage, SystemMessage
+            from langchain_core.messages import HumanMessage
 
             llm = ChatOpenAI(
                 model=self.model,
@@ -106,8 +99,8 @@ class LLM2Executor:
                 reasoning_effort=None,
             )
 
+            # No system prompt — only the final prompt as a user message.
             messages = [
-                SystemMessage(content=SYSTEM_MESSAGE),
                 HumanMessage(content=final_prompt),
             ]
 

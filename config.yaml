@@ -16,6 +16,6 @@ llms:
   temperature: 0.0
 roles:
   judge: qwen/qwen3.8-27b
-  prompts: google/gemma-4-12b-qat
+  prompts: qwen/qwen3.6-35b-a3b
 hl: true
 max_attempts: 30

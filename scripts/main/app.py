@@ -62,6 +62,10 @@ def main() -> int:
         min_size=(800, 600),
         resizable=True,
     )
+    # 4. Register a window-close callback so that all Python threads stop
+    #    before the process exits (req: "при закрытии формы должны
+    #    останавливаться все python потоки").
+    window.events.closed += api.shutdown
     webview.start()
     return 0
 

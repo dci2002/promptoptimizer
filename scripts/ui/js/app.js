@@ -757,6 +757,7 @@
      */
 
     var btnStart = document.getElementById("btn-start");
+    var btnStop = document.getElementById("btn-stop");
     var progressField = document.getElementById("progress");
     var optimizationResultField = document.getElementById("optimization-result");
     var hlResultPrompt = document.getElementById("hl-result-prompt");
@@ -793,6 +794,10 @@
         btnStart.title = btn.text;
         btnStart.setAttribute("aria-label", btn.text);
 
+        // Stop button: enabled only while a run is in progress.
+        var stopBtn = st.stop_button || { enabled: false };
+        btnStop.disabled = !stopBtn.enabled;
+
         // Phase 7 (T7.5): HL wait state — fill the Source prompt field,
         // focus the Result prompt field and enable it (it is the only input
         // the human needs to act on while the agent is blocked).
@@ -805,6 +810,9 @@
             optimizationResultField.disabled = true;
             hlResultPrompt.disabled = false;
             hlResultPrompt.focus();
+            // req 3.7 HL: the Continue button is active as soon as the
+            // Result prompt field is non-empty (re-checked on input).
+            btnStart.disabled = !hlResultPrompt.value.trim();
         } else {
             optimizationResultField.disabled = false;
             hlResultPrompt.disabled = true;
@@ -951,6 +959,40 @@
     }
 
     btnStart.addEventListener("click", onStartClick);
+
+    function onStopClick() {
+        var a = api();
+        if (!a || !a.stop_run) {
+            toast("Bridge not ready", "error");
+            return;
+        }
+        if (!execState.running) {
+            toast("No run in progress", "error");
+            return;
+        }
+        setStatus("Stopping run …", "info");
+        a.stop_run().then(function (res) {
+            if (!res || res.ok === false) {
+                toast(res && res.error ? res.error : "Stop failed", "error");
+                return;
+            }
+            setStatus("Stop requested — waiting for the agent to finish the current step", "info");
+            toast("Stop requested", "info");
+        }).catch(function (err) {
+            toast("Stop failed: " + err, "error");
+        });
+    }
+
+    btnStop.addEventListener("click", onStopClick);
+
+    // req 3.7 HL: the Continue (Start) button is active as soon as the
+    // Result prompt field is non-empty — re-check on every keystroke so
+    // the user does not have to wait for the next 500 ms poll cycle.
+    hlResultPrompt.addEventListener("input", function () {
+        if (execState.hlWaiting) {
+            btnStart.disabled = !hlResultPrompt.value.trim();
+        }
+    });
 
     /* ═══════════════════════════ Bridge probe (Phase 1) ═══════════════════════════
      * On load call window.pywebview.api.get_config(), log the result to the
