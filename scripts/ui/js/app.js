@@ -767,13 +767,31 @@
         if (!a || !a.get_state) return;
         a.get_state().then(function (st) {
             if (st && st.ok) {
+                var wasRunning = execState.running;
                 renderExecution(st);
 
-                // Stop polling once the run is finished (and we're not waiting HL).
-                if (!st.running && !st.hl_waiting && execState.pollTimer) {
+                // T6.5: on running going false → stop polling. The
+                // Optimization result field was already filled by
+                // renderExecution from st.optimization_result (T6.2).
+                if (wasRunning && !st.running && !st.hl_waiting) {
+                    if (execState.pollTimer) {
+                        clearInterval(execState.pollTimer);
+                        execState.pollTimer = null;
+                    }
+                    execState.running = false;
+                    var res = st.optimization_result || "";
+                    if (res) {
+                        setStatus("Optimization finished — final template in the result field", "ok");
+                        toast("Optimization finished", "ok");
+                    } else {
+                        setStatus("Run finished (no result)", "info");
+                    }
+                } else if (!st.running && !st.hl_waiting && execState.pollTimer && !wasRunning) {
+                    // Defensive: polling started but run never began (shouldn't
+                    // happen — startPolling is only called after a successful
+                    // start_run). Stop to avoid an idle timer.
                     clearInterval(execState.pollTimer);
                     execState.pollTimer = null;
-                    execState.running = false;
                 }
             }
         }).catch(function () {
@@ -783,10 +801,13 @@
 
     function startPolling() {
         if (execState.pollTimer) return; // already polling
+        // T6.4: clear fields before starting a new run's poll cycle
+        // (already done in onStartClick, but keep as safety net).
         execState.lastProgress = "";
         execState.lastResult = "";
         progressField.value = "";
         optimizationResultField.value = "";
+        execState.running = true;
         execState.pollTimer = setInterval(pollState, 500);
     }
 
@@ -804,7 +825,7 @@
             return;
         }
 
-        // Reject a concurrent run.
+        // T6.3: reject a concurrent run (double-start guard).
         if (execState.running) {
             toast("A run is already in progress", "error");
             return;
@@ -814,21 +835,29 @@
             return { name: v.name, value: v.value };
         });
 
+        // T6.4: clear Progress + Optimization result before a real run.
+        execState.lastProgress = "";
+        execState.lastResult = "";
+        progressField.value = "";
+        optimizationResultField.value = "";
+
         setStatus("Starting run …", "info");
         a.start_run(promptField.value, resultField.value, variables, state.hl)
             .then(function (res) {
+                // T6.4: error → toast, button stays enabled (polling not started).
                 if (!res || res.ok === false) {
                     if (res && res.errors) {
                         toast(res.errors.join(" · "), "error", 6000);
+                        validationStrip.textContent = res.errors.join("  ·  ");
+                        validationStrip.style.display = "block";
                     } else if (res && res.error) {
                         toast(res.error, "error", 6000);
                     }
                     setStatus("Run failed to start", "error");
                     return;
                 }
-                if (res.dry_run) {
-                    toast("Dry-run started — no agent will be launched (Phase 5)", "info");
-                }
+                // T6.4: ok → button will be disabled by the polling state,
+                // resume polling so Progress streams from the worker thread.
                 setStatus("Run started", "ok");
                 startPolling();
             })

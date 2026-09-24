@@ -15,10 +15,17 @@ Phase 2 checks (scenarios 3.1–3.4 of the GUI test):
 - role dropdowns contain all LLM names;
 - HL checkbox toggles.
 
-Phase 5 check (dry-run logging):
-- click #btn-start → Progress field fills with canned [DRY-RUN] lines;
-- Start button disables during the run and re-enables after;
-- Optimization result field stays empty (dry run).
+Phase 6 checks (real automatic run, T6.6 / T6.7):
+- T6.6: click #btn-start → the real agent runs in a worker thread;
+  Progress streams step/tool-call events, the workspace gets the run
+  files (prompt.txt, result.txt, {var}.txt, final_prompt.txt,
+  prompt_V<n>.txt), the Optimization result field shows the final
+  template, and Start re-enables after the run;
+- T6.3: rapid double-click on "Start" while running → the second click
+  is rejected with an "already in progress" toast;
+- T6.7: unset a role → Start → validation aborts before the worker:
+  error toast, _running stays False, the workspace is untouched.
+  (Skipped when the role LLM servers are unreachable.)
 
 NOTE: this probe runs against a **copy** of config.yaml in a temp dir and
 points ConfigManager at that copy, so the real project config.yaml is never
@@ -40,6 +47,9 @@ import tempfile
 import threading
 import time
 
+import socket
+import urllib.parse
+
 import yaml
 
 _SCRIPTS_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -55,9 +65,31 @@ PROJECT_ROOT = os.path.dirname(_SCRIPTS_DIR)
 INDEX_HTML = os.path.join(_SCRIPTS_DIR, "ui", "js", "index.html")
 REAL_CONFIG = os.path.join(PROJECT_ROOT, "config.yaml")
 
+# The probe drives the REAL app path end-to-end (Phase 6: full optimization
+# loop), so base_dir must match the app's: <project root>/workspace
+# (main/app.py).  The probe never touches the real config.yaml (it uses a
+# temp copy), but the workspace files are the genuine run artifacts.
+WORKSPACE_DIR = os.path.join(PROJECT_ROOT, "workspace")
+
+
+def _server_reachable(api_base: str, timeout: float = 3.0) -> bool:
+    """Best-effort TCP check of an api_base host:port (Phase 6 skip logic)."""
+    try:
+        hostport = urllib.parse.urlsplit(api_base).netloc
+        if not hostport:
+            return False
+        host, _, port = hostport.partition(":")
+        port = int(port or (443 if "https" in api_base else 80))
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
 # Global hard timeout: if the probe hasn't finished within this many seconds,
 # kill the process.  Prevents indefinite hangs if evaluate_js misbehaves.
-GLOBAL_TIMEOUT_S = 180
+# NOTE: the Phase 6 real optimization loop (T6.6) can take several minutes
+# (ReAct agent: many llm1/llm2 calls), so the budget is ~15 minutes.
+GLOBAL_TIMEOUT_S = 900
 
 PROBE_JS = """
 (() => {
@@ -229,25 +261,7 @@ JS_RUN_PROMPT_STATE = """
 # field unchanged.
 JS_RERUN_PROMPT = "document.getElementById('btn-run-prompt').click()"
 
-# ── Phase 5: dry-run logging GUI test ────────────────────────────────────
-# Switch to the Prompts tab, fill a trivially valid prompt (no variables →
-# validation passes), and click #btn-start.  The dry-run worker then appends
-# canned [DRY-RUN] lines to the Progress field over ~2.5 s.
-JS_DRYRUN_TRIGGER = """
-(() => {
-    const promptsBtn = document.querySelector('.tab-btn[data-tab="prompts"]');
-    if (promptsBtn) promptsBtn.click();
-    document.getElementById('prompt').value = 'Reply with the single word: pong';
-    document.getElementById('result').value = 'pong';
-    // Ensure no variables are defined (avoids {{var}} validation errors).
-    const rows = document.querySelectorAll('#variables-table tbody tr');
-    rows.forEach(r => r.remove());
-    const btn = document.getElementById('btn-start');
-    btn.click();
-    return {clicked: true, btnDisabled: btn.disabled};
-})()
-"""
-# Snapshot of the execution-area DOM state (polled after the dry-run).
+# Snapshot of the execution-area DOM state (polled after the run).
 # Synchronous DOM snapshot (no bridge call).  The authoritative "running"
 # flag is read directly from the Python Api instance in the probe thread
 # (evaluate_js cannot return Promises — see probe header comment).
@@ -267,6 +281,52 @@ JS_EXEC_STATE = """
 })()
 """
 
+# ── Phase 6: real automatic run GUI test (T6.6 / T6.7) ──────────────────
+# T6.6: switch to the Prompts tab, fill a prompt with one {{x}} variable,
+# add the variable via the form, and click #btn-start.  The real agent runs
+# in a worker thread (req 3.7): Progress streams step/tool-call events and,
+# on completion, the Optimization result field shows the final template.
+# {varname} / {varvalue} are substituted from Python.
+JS_REALRUN_TRIGGER = """
+(() => {
+    const promptsBtn = document.querySelector('.tab-btn[data-tab="prompts"]');
+    if (promptsBtn) promptsBtn.click();
+    document.getElementById('prompt').value =
+        'Answer with the single word: {varvalue}.';
+    document.getElementById('result').value = 'The single word: {varvalue}.';
+    // Remove any leftover variable rows so the table is in a known state.
+    const varBody = document.querySelector('#variables-table tbody');
+    if (varBody) varBody.innerHTML = '';
+    // Add the {varname} variable with its value via the UI form.
+    document.getElementById('btn-var-add').click();
+    document.getElementById('var-name').value = '{varname}';
+    document.getElementById('var-value').value = '{varvalue}';
+    document.getElementById('var-dialog-save').click();
+    // Click Start — onStartClick calls api.start_run(...) (real worker).
+    const btn = document.getElementById('btn-start');
+    btn.click();
+    return {clicked: true};
+})()
+"""
+# Re-click #btn-start to exercise the T6.3 double-start guard (a second
+# start while a run is in progress must be rejected with a toast).
+JS_DOUBLE_CLICK_START = "document.getElementById('btn-start').click()"
+# Snapshot of the error-toast texts currently visible in the DOM.
+JS_TOASTS = "[...document.querySelectorAll('.toast')].map(t => t.textContent)"
+# Unset the judge role in the Settings tab via the DOM (exactly like a user
+# would: select the empty option and fire change → api.set_role('judge', '')).
+# Returns the resulting dropdown value.
+JS_UNSET_JUDGE_ROLE = """
+(() => {
+    const settingsBtn = document.querySelector('.tab-btn[data-tab="settings"]');
+    if (settingsBtn) settingsBtn.click();
+    const sel = document.getElementById('role-judge');
+    sel.value = '';
+    sel.dispatchEvent(new Event('change', {bubbles: true}));
+    return sel.value;
+})()
+"""
+
 
 def main() -> int:
     # Work on a copy of the real config so the probe never mutates the project.
@@ -276,7 +336,7 @@ def main() -> int:
     print(f"[probe] using temp config: {cfg_path}", flush=True)
 
     config = ConfigManager(path=cfg_path)
-    api = Api(config)
+    api = Api(config, base_dir=WORKSPACE_DIR)
     window = webview.create_window(
         "Prompt Optimizer (probe)", INDEX_HTML, js_api=api, width=1000, height=720
     )
@@ -512,7 +572,7 @@ def main() -> int:
             print("OK(4): Result field filled with LLM output", flush=True)
 
         # final_prompt.txt must exist in the workspace and contain the prompt.
-        final_path = os.path.join(PROJECT_ROOT, "workspace", "final_prompt.txt")
+        final_path = os.path.join(WORKSPACE_DIR, "final_prompt.txt")
         if os.path.exists(final_path):
             fp_content = open(final_path, "r", encoding="utf-8").read()
             if prompt_text in fp_content:
@@ -529,6 +589,7 @@ def main() -> int:
         judge_name = (disk_cfg.get("roles") or {}).get("judge", "")
         print(f"[probe] 4 break judge: {judge_name!r}", flush=True)
         broken_result = result_filled  # capture Result value before the error run
+        _orig_judge = None
         try:
             judge_entry = next(
                 (l for l in (disk_cfg.get("llms") or [])
@@ -536,6 +597,7 @@ def main() -> int:
                 None,
             )
             if judge_entry:
+                _orig_judge = dict(judge_entry)  # capture for restoration after the error-path test
                 config.update_llm(judge_name, {
                     "name": judge_name,
                     "api_base": "http://127.0.0.1:1/v1",  # unroutable
@@ -564,83 +626,197 @@ def main() -> int:
         except Exception as exc:  # noqa: BLE001
             print(f"FAIL(4.6): broke judge config but error run raised: {exc}", flush=True); ok = False
 
-        # ── 5. DRY-RUN LOGGING (Phase 5 GUI test) ───────────────────────
-        # Click #btn-start → the dry-run worker appends canned [DRY-RUN] lines
-        # to the Progress field over ~2.5 s.  The Start button must be disabled
-        # while running and re-enabled after.  The Optimization result field
-        # must remain empty (dry run produces no result).
-        dryrun_trigger = window.evaluate_js(JS_DRYRUN_TRIGGER)
-        print(f"[probe] 5 DRY-RUN: trigger={dryrun_trigger}", flush=True)
+        # Restore the judge LLM's original api_base — the Phase 6 real run
+        # uses the same temp config and must reach a live server.
+        if _orig_judge:
+            config.update_llm(judge_name, {
+                "name": judge_name,
+                "api_base": _orig_judge.get("api_base", ""),
+                "api_key": _orig_judge.get("api_key", "test"),
+                "model": _orig_judge.get("model", judge_name),
+                "temperature": _orig_judge.get("temperature", 0.0),
+            })
 
-        # Immediately after click: the Python _running flag should be True.
-        # Read it directly from the Api instance (evaluate_js can't return
-        # Promises, and the DOM btn.disabled lags by up to 500 ms).
-        time.sleep(0.3)
-        try:
-            py_state = api.get_state()
-            py_running = py_state.get("running") if py_state.get("ok") else None
-        except Exception as exc:  # noqa: BLE001
-            py_running = None
-            print(f"[probe] 5 DRY-RUN: get_state raised: {exc}", flush=True)
-        print(f"[probe] 5 DRY-RUN: py_running after click={py_running}", flush=True)
-        if py_running is not True:
-            print(f"FAIL(5): Python _running not True immediately after start_run click (got {py_running!r})", flush=True)
-            ok = False
+        # ── 6. REAL AUTOMATIC RUN (Phase 6 GUI test: T6.6 / T6.7) ───────
+        # T6.6: click #btn-start → the real agent runs in a worker thread
+        # (req 3.7): Progress streams step/tool-call events, the workspace
+        # gets prompt.txt / result.txt / {var}.txt / final_prompt.txt /
+        # prompt_V<n>.txt, and on completion the Optimization result field
+        # shows the final template and Start re-enables.
+        # T6.7: unset a role → Start → validation abort before the worker
+        # (error toast, workspace untouched).
+        # Double-click guard (T6.3): a second Start click while running is
+        # rejected with an "already in progress" toast.
+        #
+        # Skipped when both role LLM servers are unreachable (no vLLM
+        # cluster), like the Phase 4 integration test.
+        with open(cfg_path, "r", encoding="utf-8") as f:
+            disk_cfg6 = yaml.safe_load(f)
+        _roles6 = disk_cfg6.get("roles") or {}
+        _role_bases = [
+            next((l.get("api_base") for l in (disk_cfg6.get("llms") or [])
+                  if isinstance(l, dict) and l.get("name") == _roles6.get(r)), None)
+            for r in ("judge", "prompts")
+        ]
+        servers_up = any(b and _server_reachable(b) for b in _role_bases if b)
+        if not servers_up:
+            print("SKIP(6): role LLM servers unreachable — "
+                  "real run test skipped (no vLLM cluster)", flush=True)
         else:
-            print("OK(5): Python _running=True immediately after Start click", flush=True)
+            _VARNAME = "x"
+            _VARVALUE = "pong"
+            ws_dir = os.path.join(PROJECT_ROOT, "workspace")
 
-        # Poll until the Python-side run finishes, then read the DOM snapshot.
-        exec_st = None
-        py_running_final = None
-        for _ in range(30):  # up to ~15 s
+            # 6a. real run (T6.6) ──────────────────────────────────────────
+            trigger6 = window.evaluate_js(
+                JS_REALRUN_TRIGGER.replace("{varname}", _VARNAME)
+                    .replace("{varvalue}", _VARVALUE)
+            )
+            print(f"[probe] 6 REAL RUN: trigger={trigger6}", flush=True)
+
+            # Immediately after the click: Python _running must be True.
+            # (evaluate_js can't return Promises; the DOM btn.disabled lags
+            # by up to 500 ms — the Api instance is authoritative.)
             time.sleep(0.5)
+            py_running = None
             try:
-                py_st = api.get_state()
-                py_running_final = py_st.get("running") if py_st.get("ok") else None
-            except Exception:  # noqa: BLE001
-                py_running_final = None
-            if py_running_final is False:
-                # Run finished on the Python side.  Give the DOM a beat to settle
-                # (the 500 ms JS poll cycle needs to apply the new state).
-                time.sleep(1.0)
-                exec_st = window.evaluate_js(JS_EXEC_STATE)
-                break
-        print(f"[probe] 5 DRY-RUN: py_running_final={py_running_final} exec_st={exec_st}", flush=True)
-
-        if not isinstance(exec_st, dict):
-            print("FAIL(5): could not read execution state", flush=True); ok = False
-        else:
-            progress_text = str(exec_st.get("progressText") or "")
-            # Check all 5 canned [DRY-RUN] lines are present.
-            expected_lines = [
-                "[DRY-RUN] Starting optimization (dry-run mode) …",
-                "[DRY-RUN] Validation passed — template + variables OK",
-                "[DRY-RUN] build_prompt: simulated (final_prompt.txt written)",
-                "[DRY-RUN] llm2: simulated (412 chars result)",
-                "[DRY-RUN] Dry-run complete — no agent was started",
-            ]
-            missing = [ln for ln in expected_lines if ln not in progress_text]
-            if missing:
-                print(f"FAIL(5): Progress field missing {len(missing)} expected line(s): {missing}", flush=True)
+                _st0 = api.get_state()
+                py_running = _st0.get("running") if _st0.get("ok") else None
+            except Exception as exc:  # noqa: BLE001
+                print(f"[probe] 6 REAL RUN: get_state raised: {exc}", flush=True)
+            print(f"[probe] 6 REAL RUN: py_running after click={py_running}", flush=True)
+            if py_running is not True:
+                print(f"FAIL(6): Python _running not True right after Start click (got {py_running!r})", flush=True)
                 ok = False
             else:
-                print(f"OK(5): Progress field filled with all {len(expected_lines)} [DRY-RUN] lines", flush=True)
+                print("OK(6): Python _running=True immediately after Start click", flush=True)
 
-            # DOM button must be re-enabled after the run (500 ms poll cycle
-            # should have applied the state by now — we waited 1 s).
-            if exec_st.get("btnDisabled") is not False:
-                print(f"FAIL(5): Start button still disabled in DOM after dry-run: btnDisabled={exec_st.get('btnDisabled')}", flush=True)
+            # T6.3 double-click guard: a second Start click while running
+            # must be rejected with an "already in progress" toast.
+            window.evaluate_js(JS_DOUBLE_CLICK_START)
+            time.sleep(0.5)
+            toasts_dc = window.evaluate_js(JS_TOASTS) or []
+            print(f"[probe] 6 DOUBLE-CLICK: toasts={toasts_dc}", flush=True)
+            if not any("already in progress" in str(t) for t in toasts_dc):
+                print("FAIL(6): double-click was not rejected with an 'already in progress' toast", flush=True)
                 ok = False
             else:
-                print("OK(5): Start button re-enabled in DOM after dry-run", flush=True)
+                print("OK(6): double-click on Start rejected with 'already in progress' toast", flush=True)
 
-            # Optimization result must stay empty.
-            opt_val = str(exec_st.get("optResult") or "")
-            if opt_val:
-                print(f"FAIL(5): Optimization result not empty after dry-run: {opt_val!r}", flush=True)
+            # Wait for the real optimization loop to finish (up to ~10 min:
+            # the ReAct agent may make many llm1/llm2 calls).
+            exec_st6 = None
+            py_running_final = None
+            for _ in range(2400):
+                # Pre-roll: the ReAct agent's first tool call takes several
+                # seconds — poll quickly at first, then settle into a 1 s
+                # cycle (up to ~40 min, well inside GLOBAL_TIMEOUT_S=900).
+                time.sleep(0.5 if _ < 6 else 1.0)
+                try:
+                    py_st = api.get_state()
+                    py_running_final = py_st.get("running") if py_st.get("ok") else None
+                except Exception:  # noqa: BLE001
+                    py_running_final = None
+                if py_running_final is False:
+                    time.sleep(1.5)  # let the 500 ms JS poll cycle settle
+                    exec_st6 = window.evaluate_js(JS_EXEC_STATE)
+                    break
+            print(f"[probe] 6 REAL RUN: py_running_final={py_running_final}", flush=True)
+            if exec_st6 is not None:
+                print(f"[probe] 6 REAL RUN: exec_st6={exec_st6}", flush=True)
+            if py_running_final is not False:
+                print("FAIL(6): real run never finished (timeout)", flush=True)
+                ok = False
+            elif not isinstance(exec_st6, dict):
+                print("FAIL(6): could not read execution state", flush=True)
                 ok = False
             else:
-                print("OK(5): Optimization result empty (dry-run)", flush=True)
+                progress6 = str(exec_st6.get("progressText") or "")
+                if not progress6.strip():
+                    print("FAIL(6): Progress field is empty after the real run", flush=True)
+                    ok = False
+                else:
+                    print(f"OK(6): Progress field streams events ({len(progress6)} chars, "
+                          f"first 200: {progress6[:200]!r} …)", flush=True)
+
+                opt6 = str(exec_st6.get("optResult") or "")
+                if not opt6.strip():
+                    print("FAIL(6): Optimization result field is empty after the real run", flush=True)
+                    ok = False
+                else:
+                    print(f"OK(6): Optimization result shows the final template ({len(opt6)} chars): {opt6[:120]!r}", flush=True)
+
+                if exec_st6.get("btnDisabled") is not False:
+                    print(f"FAIL(6): Start button still disabled after the run: btnDisabled={exec_st6.get('btnDisabled')}", flush=True)
+                    ok = False
+                else:
+                    print("OK(6): Start button re-enabled in the DOM after the run", flush=True)
+
+                # T6.6: workspace files must exist after a successful run.
+                ws_files = set(os.listdir(ws_dir)) if os.path.isdir(ws_dir) else set()
+                print(f"[probe] 6 WORKSPACE: files={sorted(ws_files)}", flush=True)
+                required = {f"{_VARNAME}.txt", "prompt.txt", "result.txt"}
+                missing_ws = required - ws_files
+                if missing_ws:
+                    print(f"FAIL(6): workspace missing files: {sorted(missing_ws)}", flush=True)
+                    ok = False
+                else:
+                    print(f"OK(6): workspace has prompt.txt, result.txt, {_VARNAME}.txt", flush=True)
+                if not any(f.startswith("prompt_V") for f in ws_files):
+                    print(f"FAIL(6): no versioned prompt_V<n>.txt in workspace: {sorted(ws_files)}", flush=True)
+                    ok = False
+                else:
+                    print("OK(6): versioned prompt_V<n>.txt present in workspace", flush=True)
+                if not os.path.isfile(os.path.join(ws_dir, "final_prompt.txt")):
+                    print("FAIL(6): workspace/final_prompt.txt missing", flush=True)
+                    ok = False
+                else:
+                    print("OK(6): workspace/final_prompt.txt present", flush=True)
+
+            # 6b. validation abort (T6.7): unset a role and click Start.
+            # Validation fails BEFORE the worker starts, so _running stays
+            # False, an error toast appears and the workspace (with the T6.6
+            # files) must remain untouched.
+            # The role is unset via the DOM dropdown (exactly the user path),
+            # BEFORE the Start click.  The T6.6 run must be fully finished by
+            # now (6a waited for py_running_final False).
+            ws_snapshot = set(os.listdir(ws_dir)) if os.path.isdir(ws_dir) else set()
+            unval = window.evaluate_js(JS_UNSET_JUDGE_ROLE)
+            time.sleep(0.5)  # wait for api.set_role('judge', '') to persist
+            print(f"[probe] 6 VALIDATION ABORT: judge role unset via DOM (value={unval!r})", flush=True)
+            if unval != "":
+                print("FAIL(6): could not unset the judge role in the dropdown", flush=True)
+                ok = False
+            window.evaluate_js("document.getElementById('btn-start').click()")
+            time.sleep(1.0)
+            try:
+                _st7 = api.get_state()
+                running_after_abort = _st7.get("running") if _st7.get("ok") else None
+            except Exception as exc:  # noqa: BLE001
+                running_after_abort = None
+                print(f"[probe] 6 VALIDATION ABORT: get_state raised: {exc}", flush=True)
+            toasts7 = window.evaluate_js(JS_TOASTS) or []
+            print(f"[probe] 6 VALIDATION ABORT: running={running_after_abort} toasts={toasts7}", flush=True)
+            if running_after_abort is not False:
+                print(f"FAIL(6): run started despite the validation abort (running={running_after_abort!r})", flush=True)
+                ok = False
+            else:
+                print("OK(6): run did not start (validation aborted before the worker)", flush=True)
+            if not any("Judge" in str(t) or "LLM" in str(t) or "not selected" in str(t) or "Error" in str(t) for t in toasts7):
+                print(f"FAIL(6): no validation error toast shown (toasts={toasts7!r})", flush=True)
+                ok = False
+            else:
+                print("OK(6): validation error toast shown", flush=True)
+            ws_after = set(os.listdir(ws_dir)) if os.path.isdir(ws_dir) else set()
+            if ws_after != ws_snapshot:
+                print(f"FAIL(6): workspace changed after the aborted run: {sorted(ws_after - ws_snapshot)} added / {sorted(ws_snapshot - ws_after)} removed", flush=True)
+                ok = False
+            else:
+                print("OK(6): workspace untouched after the validation abort", flush=True)
+
+            # Restore the judge role (temp config only) so later phases /
+            # manual runs see a fully-configured setup again.
+            config.set_role("judge", _roles6.get("judge", ""))
 
         # ── verify on-disk persistence ──────────────────────────────────
         # Note: scenario 3.3 removes probe-new, so it must NOT be on disk.

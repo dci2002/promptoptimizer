@@ -21,7 +21,6 @@ from __future__ import annotations
 
 import os
 import threading
-import time
 import traceback
 from collections import deque
 
@@ -29,7 +28,12 @@ from typing import Any, Optional
 
 from core.config import ConfigError, ConfigManager
 from core.prompt_io import load_run_data, validate_run_inputs
-from core.runner import ValidationAbort, run_prompt_check
+from core.runner import (
+    OptimizationResult,
+    ValidationAbort,
+    run_optimization,
+    run_prompt_check,
+)
 
 # ── Clipboard access (Qt-based, used by get_clipboard / copy_to_clipboard) ──
 # Imported lazily to avoid breaking headless test environments where Qt is
@@ -285,18 +289,26 @@ class Api:
             return {"ok": False, "error": f"run_prompt failed: {e}"}
 
     def start_run(self, template: str, result: str, variables: list, hl: bool) -> dict:
-        """Launch the optimization run (Phase 5 dry-run stub, T5.5).
+        """Launch the real optimization run (Phase 6, T6.1–T6.3).
 
-        In Phase 5 this is a **dry-run**: it validates the input (req 3.6),
-        then spawns a worker thread that appends a few canned progress lines
-        to the shared progress buffer over ~2 s. No agent is started — the
-        real ``run_optimization`` call is wired in Phase 6 (T6.x).
+        Validates the input (req 3.6) and, on success, spawns a daemon worker
+        thread that executes :func:`core.runner.run_optimization` (the full
+        ReAct agent loop). Agent events are appended to the lock-protected
+        progress deque (max 500 lines) and polled from JS via ``get_state``.
 
-        Returns ``{"ok": True, "dry_run": True}`` on success, or
+        T6.2 — on worker completion the ``running`` flag is cleared and the
+        ``optimization_result`` field is filled with the agent's final
+        template (T6.2).
+
+        T6.3 — double-start guard: calling ``start_run`` while a run is in
+        progress returns ``{"ok": False, "error": "A run is already in
+        progress"}`` immediately.
+
+        Returns ``{"ok": True}`` on success, or
         ``{"ok": False, "error": str}`` / ``{"ok": False, "errors": [...]}``.
         """
         try:
-            # Reject a concurrent run (one worker at a time — architecture §3.7).
+            # T6.3: reject a concurrent run (one worker at a time — architecture §3.7).
             with self._lock:
                 if self._running:
                     return {"ok": False, "error": "A run is already in progress"}
@@ -325,29 +337,44 @@ class Api:
                     self._running = False
                 return {"ok": False, "errors": errors}
 
-            # Dry-run worker: append canned progress lines over ~2 s.
+            # T6.1: real worker — run the full optimization loop.
             def _worker() -> None:
                 def _emit(msg: str) -> None:
                     with self._lock:
                         self._progress.append(msg)
 
-                _emit("[DRY-RUN] Starting optimization (dry-run mode) …")
-                time.sleep(0.5)
-                _emit("[DRY-RUN] Validation passed — template + variables OK")
-                time.sleep(0.5)
-                _emit("[DRY-RUN] build_prompt: simulated (final_prompt.txt written)")
-                time.sleep(0.5)
-                _emit("[DRY-RUN] llm2: simulated (412 chars result)")
-                time.sleep(0.5)
-                _emit("[DRY-RUN] Dry-run complete — no agent was started")
-
-                with self._lock:
-                    self._running = False
-                    self._optimization_result = ""  # dry run: no result
+                try:
+                    res: OptimizationResult = run_optimization(
+                        self._config.data,
+                        str(template or ""),
+                        str(result or ""),
+                        var_map,
+                        self._base_dir,
+                        bool(hl),
+                        on_event=_emit,
+                        # hl_bridge is wired in Phase 7 (T7.2)
+                    )
+                    _emit(
+                        f"Optimization finished: success={res.success}, "
+                        f"attempts={res.attempts}, result={len(res.final_result)} chars"
+                    )
+                    # T6.2: worker completion — store the final template.
+                    with self._lock:
+                        self._running = False
+                        self._optimization_result = res.final_template
+                except ValidationAbort as e:
+                    _emit("Validation failed inside run: " + "; ".join(e.errors))
+                    with self._lock:
+                        self._running = False
+                except Exception as e:
+                    _emit(f"Run failed: {e}")
+                    with self._lock:
+                        self._running = False
+                        self._optimization_result = ""
 
             self._worker = threading.Thread(target=_worker, daemon=True)
             self._worker.start()
-            return {"ok": True, "dry_run": True}
+            return {"ok": True}
         except Exception as e:
             with self._lock:
                 self._running = False

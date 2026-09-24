@@ -166,34 +166,34 @@ click again → error toast, Result unchanged (req 3.6 enforcement visible).
 
 ## Phase 5 — Agent core (headless) + execution area (GUI test: dry-run logging)
 
-- [ ] **T5.1** `core/agent.py`: port `ReActAgent` from the template —
+- [x] **T5.1** `core/agent.py`: port `ReActAgent` from the template —
       `SYSTEM_PROMPT`, `_get_llm`, `_make_tools` (all 6 tools:
       `build_prompt`, `llm2`, `explain_result`, `analyze_prompt`,
       `save_prompt`, `finish`), `run()` with
       `recursion_limit = max_attempts * 10`.
-- [ ] **T5.2** Replace `print()` with `on_event(str)` callback at: run
+- [x] **T5.2** Replace `print()` with `on_event(str)` callback at: run
       start, every tool call (name + result size), every iteration, HL
       wait start/end, finish/success.
-- [ ] **T5.3** `HLBridge` protocol in `agent.py`: in HL mode
+- [x] **T5.3** `HLBridge` protocol in `agent.py`: in HL mode
       `analyze_prompt` writes `srcprompt.txt`, then calls
       `self._hl_bridge.wait_for_response() -> str` (replaces the template's
       blocking `while` poll); response parsed as `ШАБЛОН:` / `ИЗМЕНЕНИЯ:`;
       `_change_history` behavior unchanged. Non-HL path equivalent to the
       template.
-- [ ] **T5.4** `runner.run_optimization(role_cfgs, template, expected,
+- [x] **T5.4** `runner.run_optimization(role_cfgs, template, expected,
       variables, base_dir, hl, on_event, hl_bridge) -> OptimizationResult`
       (`success`, `final_template`, `final_result`, `attempts`).
-- [ ] **T5.5** `Api` stubs wired to real state: `get_state()` returns
+- [x] **T5.5** `Api` stubs wired to real state: `get_state()` returns
       `{"running": False, "hl_waiting": False, "progress": "",
       "source_prompt": "", "optimization_result": "",
       "start_button": {"enabled": True, "text": "Start"}}`; `start_run`
       returns a controlled `{"ok": True, "dry_run": True}` that appends a
       few canned progress lines to the shared progress buffer (no agent yet).
-- [ ] **T5.6** `app.js` — Execution area: "Start" icon button, Progress
+- [x] **T5.6** `app.js` — Execution area: "Start" icon button, Progress
       field (multiline, 10 lines), Optimization result field (multiline,
       10 lines); polling loop: every 500 ms `api.get_state()` → append new
       progress lines, render start-button state.
-- [ ] **T5.7** Integration test (skippable): agent runs a trivially-matching
+- [x] **T5.7** Integration test (skippable): agent runs a trivially-matching
       prompt headless → `finish` called, `success=True`; events list is
       non-empty.
 
@@ -205,25 +205,25 @@ real run will use.
 
 ## Phase 6 — Real automatic run (GUI test: full optimization loop)
 
-- [ ] **T6.1** `Api.start_run` real implementation: validate (3.6), write
+- [x] **T6.1** `Api.start_run` real implementation: validate (3.6), write
       files, launch `threading.Thread` running `run_optimization` with
       `on_event` appending to the lock-protected progress deque (max 500
       lines); set `running=True`, start button → disabled "Start".
-- [ ] **T6.2** Worker completion: set `running=False`,
+- [x] **T6.2** Worker completion: set `running=False`,
       `optimization_result = final_template`, re-enable "Start".
-- [ ] **T6.3** Double-start guard: `start_run` while running →
+- [x] **T6.3** Double-start guard: `start_run` while running →
       `{"ok": False, "error": "already running"}` + toast in UI.
-- [ ] **T6.4** `app.js` — real "Start" click: clear Progress + Optimization
+- [x] **T6.4** `app.js` — real "Start" click: clear Progress + Optimization
       result, call `api.start_run(...)`, error → toast + button stays
       enabled; ok → disable button, resume polling.
-- [ ] **T6.5** `app.js` — on `running` going false → stop polling, fill
+- [x] **T6.5** `app.js` — on `running` going false → stop polling, fill
       Optimization result with `final_template`.
-- [ ] **T6.6** E2E manual test (automatic mode): configure 2 LLMs, prompt +
+- [x] **T6.6** E2E manual test (automatic mode): configure 2 LLMs, prompt +
       result + variables, Start → Progress streams real steps and tool
       calls; Optimization result shows the final template; `workspace/`
       contains `prompt.txt`, `result.txt`, `{var}.txt`, `final_prompt.txt`,
       `prompt_V<n>.txt`.
-- [ ] **T6.7** E2E manual test (validation abort): unset a role → Start →
+- [x] **T6.7** E2E manual test (validation abort): unset a role → Start →
       run does not start, error toast, `workspace/` untouched.
 
 **GUI test (Phase 6):** the full req 3.7 automatic scenario end-to-end in
