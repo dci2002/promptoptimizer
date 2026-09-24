@@ -711,6 +711,135 @@
     rolePromptsSel.addEventListener("change", function () { onRoleChange("prompts", rolePromptsSel); });
     hlFlagSettings.addEventListener("change", onHlChange);
 
+    /* ═══════════════════════════ Phase 5 — Execution area ═══════════════════════════
+     * Start button → api.start_run() → worker thread (dry-run in Phase 5).
+     * A 500 ms polling loop calls api.get_state() and renders:
+     *   - the "Progress" field (multi-line log from the worker thread);
+     *   - the "Optimization result" field (final template; empty in dry-run);
+     *   - the Start button (enabled / disabled + "Start" / "Continue" text).
+     *
+     * The "Continue" (HL) path is wired in Phase 7; for now the button only
+     * starts a run.
+     */
+
+    var btnStart = document.getElementById("btn-start");
+    var progressField = document.getElementById("progress");
+    var optimizationResultField = document.getElementById("optimization-result");
+    var hlResultPrompt = document.getElementById("hl-result-prompt");
+
+    var execState = {
+        running: false,
+        hlWaiting: false,
+        lastProgress: "",
+        lastResult: "",
+        pollTimer: null,
+    };
+
+    function renderExecution(st) {
+        if (!st) return;
+
+        // Progress: render the full text (the worker thread owns the buffer).
+        if (st.progress !== execState.lastProgress) {
+            progressField.value = st.progress || "";
+            progressField.scrollTop = progressField.scrollHeight;
+            execState.lastProgress = st.progress;
+        }
+
+        // Optimization result: render when the worker sets it (Phase 6+).
+        if (st.optimization_result !== execState.lastResult) {
+            optimizationResultField.value = st.optimization_result || "";
+            execState.lastResult = st.optimization_result;
+        }
+
+        // Start button: enabled / disabled + "Start" / "Continue".
+        var btn = st.start_button || { enabled: true, text: "Start" };
+        btnStart.disabled = !btn.enabled;
+        btnStart.title = btn.text;
+        btnStart.setAttribute("aria-label", btn.text);
+
+        // Track state for the polling loop.
+        execState.running = !!st.running;
+        execState.hlWaiting = !!st.hl_waiting;
+    }
+
+    function pollState() {
+        var a = api();
+        if (!a || !a.get_state) return;
+        a.get_state().then(function (st) {
+            if (st && st.ok) {
+                renderExecution(st);
+
+                // Stop polling once the run is finished (and we're not waiting HL).
+                if (!st.running && !st.hl_waiting && execState.pollTimer) {
+                    clearInterval(execState.pollTimer);
+                    execState.pollTimer = null;
+                    execState.running = false;
+                }
+            }
+        }).catch(function () {
+            /* transient bridge error — keep polling */
+        });
+    }
+
+    function startPolling() {
+        if (execState.pollTimer) return; // already polling
+        execState.lastProgress = "";
+        execState.lastResult = "";
+        progressField.value = "";
+        optimizationResultField.value = "";
+        execState.pollTimer = setInterval(pollState, 500);
+    }
+
+    function onStartClick() {
+        var a = api();
+        if (!a || !a.start_run) {
+            toast("Bridge not ready", "error");
+            return;
+        }
+
+        // If the button says "Continue", handle the HL continue (Phase 7).
+        // For now, HL is not implemented — show a hint.
+        if (btnStart.title === "Continue" || execState.hlWaiting) {
+            toast("HL continue is wired in Phase 7", "info");
+            return;
+        }
+
+        // Reject a concurrent run.
+        if (execState.running) {
+            toast("A run is already in progress", "error");
+            return;
+        }
+
+        var variables = state.variables.map(function (v) {
+            return { name: v.name, value: v.value };
+        });
+
+        setStatus("Starting run …", "info");
+        a.start_run(promptField.value, resultField.value, variables, state.hl)
+            .then(function (res) {
+                if (!res || res.ok === false) {
+                    if (res && res.errors) {
+                        toast(res.errors.join(" · "), "error", 6000);
+                    } else if (res && res.error) {
+                        toast(res.error, "error", 6000);
+                    }
+                    setStatus("Run failed to start", "error");
+                    return;
+                }
+                if (res.dry_run) {
+                    toast("Dry-run started — no agent will be launched (Phase 5)", "info");
+                }
+                setStatus("Run started", "ok");
+                startPolling();
+            })
+            .catch(function (err) {
+                setStatus("Run failed to start: " + err, "error");
+                toast("Failed to start: " + err, "error");
+            });
+    }
+
+    btnStart.addEventListener("click", onStartClick);
+
     /* ═══════════════════════════ Bridge probe (Phase 1) ═══════════════════════════
      * On load call window.pywebview.api.get_config(), log the result to the
      * status line (proves the bridge) and initialise the Settings tab.

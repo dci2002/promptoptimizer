@@ -20,7 +20,10 @@ escape to the JS side.
 from __future__ import annotations
 
 import os
+import threading
+import time
 import traceback
+from collections import deque
 
 from typing import Any, Optional
 
@@ -64,6 +67,17 @@ class Api:
             os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
             "workspace",
         )
+        # ── Execution state (Phase 5, T5.5) ──────────────────────────────
+        # All mutable UI-visible state is guarded by a single lock so that
+        # the worker thread and the GUI thread (polling get_state) can
+        # coexist safely (architecture §3.7).
+        self._lock = threading.Lock()
+        self._running = False
+        self._hl_waiting = False
+        self._progress: deque[str] = deque(maxlen=500)
+        self._source_prompt = ""
+        self._optimization_result = ""
+        self._worker: Optional[threading.Thread] = None
 
     # ------------------------------------------------------------- Phase 1
     def get_config(self) -> dict:
@@ -271,13 +285,121 @@ class Api:
             return {"ok": False, "error": f"run_prompt failed: {e}"}
 
     def start_run(self, template: str, result: str, variables: list, hl: bool) -> dict:
-        return _stub()
+        """Launch the optimization run (Phase 5 dry-run stub, T5.5).
+
+        In Phase 5 this is a **dry-run**: it validates the input (req 3.6),
+        then spawns a worker thread that appends a few canned progress lines
+        to the shared progress buffer over ~2 s. No agent is started — the
+        real ``run_optimization`` call is wired in Phase 6 (T6.x).
+
+        Returns ``{"ok": True, "dry_run": True}`` on success, or
+        ``{"ok": False, "error": str}`` / ``{"ok": False, "errors": [...]}``.
+        """
+        try:
+            # Reject a concurrent run (one worker at a time — architecture §3.7).
+            with self._lock:
+                if self._running:
+                    return {"ok": False, "error": "A run is already in progress"}
+                self._running = True
+                self._progress.clear()
+                self._source_prompt = ""
+                self._optimization_result = ""
+                self._hl_waiting = False
+
+            # Normalise the JS variables array into a dict.
+            var_map: dict[str, str] = {}
+            if isinstance(variables, list):
+                for row in variables:
+                    if isinstance(row, dict):
+                        name = str(row.get("name") or "").strip()
+                        value = str(row.get("value") or "")
+                        if name:
+                            var_map[name] = value
+
+            # Validate (req 3.6) — abort before spawning a thread.
+            errors = validate_run_inputs(
+                self._config.data, str(template or ""), var_map
+            )
+            if errors:
+                with self._lock:
+                    self._running = False
+                return {"ok": False, "errors": errors}
+
+            # Dry-run worker: append canned progress lines over ~2 s.
+            def _worker() -> None:
+                def _emit(msg: str) -> None:
+                    with self._lock:
+                        self._progress.append(msg)
+
+                _emit("[DRY-RUN] Starting optimization (dry-run mode) …")
+                time.sleep(0.5)
+                _emit("[DRY-RUN] Validation passed — template + variables OK")
+                time.sleep(0.5)
+                _emit("[DRY-RUN] build_prompt: simulated (final_prompt.txt written)")
+                time.sleep(0.5)
+                _emit("[DRY-RUN] llm2: simulated (412 chars result)")
+                time.sleep(0.5)
+                _emit("[DRY-RUN] Dry-run complete — no agent was started")
+
+                with self._lock:
+                    self._running = False
+                    self._optimization_result = ""  # dry run: no result
+
+            self._worker = threading.Thread(target=_worker, daemon=True)
+            self._worker.start()
+            return {"ok": True, "dry_run": True}
+        except Exception as e:
+            with self._lock:
+                self._running = False
+            return {"ok": False, "error": f"start_run failed: {e}"}
 
     def continue_hl(self, response_text: str) -> Optional[dict]:
-        return _stub()
+        """Fill the HL response and release the bridge event (Phase 7).
+
+        Not implemented in Phase 5 — the HL flow is wired in Phase 7.
+        Returns ``{"ok": False, "error": "HL not implemented yet"}``.
+        """
+        return {"ok": False, "error": "HL not implemented yet (Phase 7)"}
 
     def get_state(self) -> dict:
-        return _stub()
+        """Return the current execution state (polled from JS every 500 ms).
+
+        Shape (architecture §3.6):
+
+        ``{"running": bool, "hl_waiting": bool, "progress": str,
+        "source_prompt": str, "optimization_result": str,
+        "start_button": {"enabled": bool, "text": str}}``
+        """
+        try:
+            with self._lock:
+                running = self._running
+                hl_waiting = self._hl_waiting
+                progress = "\n".join(self._progress)
+                source_prompt = self._source_prompt
+                optimization_result = self._optimization_result
+
+            # Start button state: disabled while running; "Continue" text
+            # while waiting for an HL response (Phase 7).
+            if hl_waiting:
+                start_text = "Continue"
+            else:
+                start_text = "Start"
+            start_enabled = not running
+
+            return {
+                "ok": True,
+                "running": running,
+                "hl_waiting": hl_waiting,
+                "progress": progress,
+                "source_prompt": source_prompt,
+                "optimization_result": optimization_result,
+                "start_button": {
+                    "enabled": start_enabled,
+                    "text": start_text,
+                },
+            }
+        except Exception as e:
+            return {"ok": False, "error": f"get_state failed: {e}"}
 
     # ------------------------------------------------- Phase 3 — clipboard
     def get_clipboard(self) -> dict:

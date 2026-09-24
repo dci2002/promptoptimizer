@@ -15,6 +15,11 @@ Phase 2 checks (scenarios 3.1–3.4 of the GUI test):
 - role dropdowns contain all LLM names;
 - HL checkbox toggles.
 
+Phase 5 check (dry-run logging):
+- click #btn-start → Progress field fills with canned [DRY-RUN] lines;
+- Start button disables during the run and re-enables after;
+- Optimization result field stays empty (dry run).
+
 NOTE: this probe runs against a **copy** of config.yaml in a temp dir and
 points ConfigManager at that copy, so the real project config.yaml is never
 touched.
@@ -223,6 +228,44 @@ JS_RUN_PROMPT_STATE = """
 # Python side) to exercise the req 3.6 error path: error toast + Result
 # field unchanged.
 JS_RERUN_PROMPT = "document.getElementById('btn-run-prompt').click()"
+
+# ── Phase 5: dry-run logging GUI test ────────────────────────────────────
+# Switch to the Prompts tab, fill a trivially valid prompt (no variables →
+# validation passes), and click #btn-start.  The dry-run worker then appends
+# canned [DRY-RUN] lines to the Progress field over ~2.5 s.
+JS_DRYRUN_TRIGGER = """
+(() => {
+    const promptsBtn = document.querySelector('.tab-btn[data-tab="prompts"]');
+    if (promptsBtn) promptsBtn.click();
+    document.getElementById('prompt').value = 'Reply with the single word: pong';
+    document.getElementById('result').value = 'pong';
+    // Ensure no variables are defined (avoids {{var}} validation errors).
+    const rows = document.querySelectorAll('#variables-table tbody tr');
+    rows.forEach(r => r.remove());
+    const btn = document.getElementById('btn-start');
+    btn.click();
+    return {clicked: true, btnDisabled: btn.disabled};
+})()
+"""
+# Snapshot of the execution-area DOM state (polled after the dry-run).
+# Synchronous DOM snapshot (no bridge call).  The authoritative "running"
+# flag is read directly from the Python Api instance in the probe thread
+# (evaluate_js cannot return Promises — see probe header comment).
+JS_EXEC_STATE = """
+(() => {
+    const btn = document.getElementById('btn-start');
+    const progress = document.getElementById('progress');
+    const optResult = document.getElementById('optimization-result');
+    const toasts = [...document.querySelectorAll('.toast')].map(t => t.textContent);
+    return {
+        btnDisabled: btn ? btn.disabled : null,
+        progressText: progress ? progress.value : '',
+        progressLen: progress ? progress.value.length : 0,
+        optResult: optResult ? optResult.value : '',
+        toasts: toasts
+    };
+})()
+"""
 
 
 def main() -> int:
@@ -520,6 +563,84 @@ def main() -> int:
                     print("FAIL(4.6): no error toast appeared", flush=True); ok = False
         except Exception as exc:  # noqa: BLE001
             print(f"FAIL(4.6): broke judge config but error run raised: {exc}", flush=True); ok = False
+
+        # ── 5. DRY-RUN LOGGING (Phase 5 GUI test) ───────────────────────
+        # Click #btn-start → the dry-run worker appends canned [DRY-RUN] lines
+        # to the Progress field over ~2.5 s.  The Start button must be disabled
+        # while running and re-enabled after.  The Optimization result field
+        # must remain empty (dry run produces no result).
+        dryrun_trigger = window.evaluate_js(JS_DRYRUN_TRIGGER)
+        print(f"[probe] 5 DRY-RUN: trigger={dryrun_trigger}", flush=True)
+
+        # Immediately after click: the Python _running flag should be True.
+        # Read it directly from the Api instance (evaluate_js can't return
+        # Promises, and the DOM btn.disabled lags by up to 500 ms).
+        time.sleep(0.3)
+        try:
+            py_state = api.get_state()
+            py_running = py_state.get("running") if py_state.get("ok") else None
+        except Exception as exc:  # noqa: BLE001
+            py_running = None
+            print(f"[probe] 5 DRY-RUN: get_state raised: {exc}", flush=True)
+        print(f"[probe] 5 DRY-RUN: py_running after click={py_running}", flush=True)
+        if py_running is not True:
+            print(f"FAIL(5): Python _running not True immediately after start_run click (got {py_running!r})", flush=True)
+            ok = False
+        else:
+            print("OK(5): Python _running=True immediately after Start click", flush=True)
+
+        # Poll until the Python-side run finishes, then read the DOM snapshot.
+        exec_st = None
+        py_running_final = None
+        for _ in range(30):  # up to ~15 s
+            time.sleep(0.5)
+            try:
+                py_st = api.get_state()
+                py_running_final = py_st.get("running") if py_st.get("ok") else None
+            except Exception:  # noqa: BLE001
+                py_running_final = None
+            if py_running_final is False:
+                # Run finished on the Python side.  Give the DOM a beat to settle
+                # (the 500 ms JS poll cycle needs to apply the new state).
+                time.sleep(1.0)
+                exec_st = window.evaluate_js(JS_EXEC_STATE)
+                break
+        print(f"[probe] 5 DRY-RUN: py_running_final={py_running_final} exec_st={exec_st}", flush=True)
+
+        if not isinstance(exec_st, dict):
+            print("FAIL(5): could not read execution state", flush=True); ok = False
+        else:
+            progress_text = str(exec_st.get("progressText") or "")
+            # Check all 5 canned [DRY-RUN] lines are present.
+            expected_lines = [
+                "[DRY-RUN] Starting optimization (dry-run mode) …",
+                "[DRY-RUN] Validation passed — template + variables OK",
+                "[DRY-RUN] build_prompt: simulated (final_prompt.txt written)",
+                "[DRY-RUN] llm2: simulated (412 chars result)",
+                "[DRY-RUN] Dry-run complete — no agent was started",
+            ]
+            missing = [ln for ln in expected_lines if ln not in progress_text]
+            if missing:
+                print(f"FAIL(5): Progress field missing {len(missing)} expected line(s): {missing}", flush=True)
+                ok = False
+            else:
+                print(f"OK(5): Progress field filled with all {len(expected_lines)} [DRY-RUN] lines", flush=True)
+
+            # DOM button must be re-enabled after the run (500 ms poll cycle
+            # should have applied the state by now — we waited 1 s).
+            if exec_st.get("btnDisabled") is not False:
+                print(f"FAIL(5): Start button still disabled in DOM after dry-run: btnDisabled={exec_st.get('btnDisabled')}", flush=True)
+                ok = False
+            else:
+                print("OK(5): Start button re-enabled in DOM after dry-run", flush=True)
+
+            # Optimization result must stay empty.
+            opt_val = str(exec_st.get("optResult") or "")
+            if opt_val:
+                print(f"FAIL(5): Optimization result not empty after dry-run: {opt_val!r}", flush=True)
+                ok = False
+            else:
+                print("OK(5): Optimization result empty (dry-run)", flush=True)
 
         # ── verify on-disk persistence ──────────────────────────────────
         # Note: scenario 3.3 removes probe-new, so it must NOT be on disk.
