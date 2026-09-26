@@ -7,7 +7,8 @@ Covers:
 - continue_hl guards: empty text and "not waiting" both rejected;
 - start_run injects the GUI bridge into run_optimization (T7.2);
 - full HL cycle: worker pauses (hl_waiting=True, source_prompt filled),
-  continue_hl resumes, the run completes (headless E2E, T7.7).
+  continue_hl resumes, the run completes (headless E2E, T7.7);
+- Bug 2: stop_run interrupts a blocked HL wait (RunStopped is raised).
 
 All tests mock ``core.runner.run_optimization`` — no real LLM calls.
 
@@ -153,6 +154,64 @@ class TestGuiHLBridge:
 
         # After the wait the flag is cleared again.
         assert _wait_condition(lambda: not api._hl_waiting, 5)
+        st = api.get_state()
+        assert st["hl_waiting"] is False
+        assert st["start_button"]["text"] == "Start"
+
+    def test_wait_interrupted_by_stop(self, tmp_path):
+        """Bug 2: stop_run must interrupt a blocked HL wait.
+
+        Before the fix, ``wait_for_response`` blocked on
+        ``self._event.wait()`` indefinitely — only ``release`` (i.e. the
+        human clicking Continue) could unblock it.  The Stop button sets
+        ``_stop_event`` but nothing checked it during the wait, so the
+        agent could not be stopped while blocked in the HL wait.
+
+        After the fix, the wait polls in 0.2 s increments and raises
+        ``RunStopped`` when the stop event is set.
+        """
+        from core.agent import RunStopped
+
+        api = _make_api(tmp_path)
+        bridge = api._hl_bridge
+
+        # The agent writes srcprompt.txt before calling wait_for_response.
+        ws = tmp_path / "workspace"
+        ws.mkdir(parents=True, exist_ok=True)
+        (ws / "srcprompt.txt").write_text("ANALYSIS PROMPT", encoding="utf-8")
+
+        result: dict = {}
+
+        def _waiter():
+            try:
+                bridge.wait_for_response()
+                result["return"] = True
+            except RunStopped:
+                result["stopped"] = True
+
+        t = threading.Thread(target=_waiter, daemon=True)
+        t.start()
+
+        # The wait must block: the event is not set yet.
+        time.sleep(0.3)
+        assert t.is_alive(), "wait_for_response did not block"
+        assert api._hl_waiting, "hl_waiting not set"
+
+        # Request a stop — this sets _stop_event.
+        api._stop_event.set()
+
+        # The waiter must unblock within the 0.2 s polling interval
+        # (allow generous margin for CI).
+        t.join(timeout=5)
+        assert not t.is_alive(), "waiter did not unblock after stop"
+        assert result.get("stopped") is True, \
+            f"expected RunStopped, got {result}"
+        assert "return" not in result, \
+            "wait_for_response must not return a value on stop"
+
+        # The hl_waiting flag must be cleared after the stop.
+        assert _wait_condition(lambda: not api._hl_waiting, 5), \
+            "hl_waiting not cleared after stop"
         st = api.get_state()
         assert st["hl_waiting"] is False
         assert st["start_button"]["text"] == "Start"

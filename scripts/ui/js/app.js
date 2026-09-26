@@ -805,6 +805,14 @@
         if (st.source_prompt !== execState.lastSourcePrompt) {
             sourcePromptField.value = st.source_prompt || "";
             execState.lastSourcePrompt = st.source_prompt || "";
+            // When a new (non-empty) Source prompt arrives during HL wait,
+            // clear the Result prompt field: the previous cycle's response
+            // must not persist into the next cycle, and the field must be
+            // enabled and available for the new response.
+            if (hlWaiting && st.source_prompt && st.source_prompt.trim()) {
+                hlResultPrompt.value = "";
+                hlResultPrompt.disabled = false;
+            }
         }
         if (hlWaiting) {
             optimizationResultField.disabled = true;

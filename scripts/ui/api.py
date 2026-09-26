@@ -72,7 +72,28 @@ class GuiHLBridge:
         self._response = ""
 
     def wait_for_response(self) -> str:
-        """Block until the human supplies a response; return the text."""
+        """Block until the human supplies a response; return the text.
+
+        BUG-FIX (Bug 2): the wait is now interruptible by the stop event.
+        Previously ``self._event.wait()`` blocked *indefinitely* — it only
+        unblocked when :meth:`release` was called (i.e. the human clicked
+        "Continue").  The Stop button (``Api.stop_run``) sets
+        ``_stop_event`` but nothing checked it during the HL wait, so the
+        agent could not be stopped while blocked here.
+
+        The wait now polls in short 0.2 s increments.  On each wake-up it
+        checks the cooperative stop event and raises
+        :class:`core.agent.RunStopped` when stop is requested.  The runner
+        (:func:`core.runner.run_optimization`) already catches
+        ``RunStopped`` and returns a clean ``OptimizationResult`` with
+        ``success=False``, so the worker thread exits normally and the
+        ``running`` flag is cleared — the UI un-freezes.
+        """
+        # Lazy import: core.agent imports langchain lazily inside methods, so
+        # importing just the RunStopped class here is cheap and avoids a
+        # circular import (core.agent does not import ui.api at module level).
+        from core.agent import RunStopped
+
         with self._lock:
             # Arm the wait: clear leftovers from a previous iteration, notify
             # the UI (hl_waiting + source_prompt) and reset the event.
@@ -82,7 +103,15 @@ class GuiHLBridge:
                 waiting=True,
                 source_prompt=self._api._read_workspace_file("srcprompt.txt"),
             )
-        self._event.wait()
+        # Wait in short increments so the stop event can interrupt the wait.
+        while not self._event.wait(timeout=0.2):
+            if self._api._stop_event.is_set():
+                # A stop was requested while the human was reading the
+                # analysis prompt — abandon the wait.  The runner catches
+                # RunStopped and finishes the run cleanly.
+                with self._lock:
+                    self._api._set_hl_wait_state(waiting=False)
+                raise RunStopped()
         with self._lock:
             self._api._set_hl_wait_state(waiting=False)
             return self._response
